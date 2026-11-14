@@ -51,6 +51,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
     <script>
+        // 這裡已經設定好指向你的 Render 雲端 API
         const API_BASE = "https://sat-planner.onrender.com";
         
         // 1. 地圖預設顯示台灣，底圖加上天氣資料標示
@@ -68,6 +69,7 @@
         });
         map.addControl(drawControl);
 
+        // 建立一個專屬圖層，用來放點擊後顯示的衛星範圍
         let currentFootprints = L.featureGroup().addTo(map);
         let rawAcquisitions = [];
 
@@ -111,7 +113,7 @@
                 
                 const data = await res.json();
                 
-                // 處理 422 等錯誤
+                // 處理錯誤
                 if (!res.ok) {
                     const errMsg = data.detail ? (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)) : "發生未知的錯誤";
                     tbody.innerHTML = `<tr><td colspan="4" style="color:red; text-align:center;">錯誤：${errMsg}</td></tr>`;
@@ -133,16 +135,22 @@
                     
                     tr.innerHTML = `<td>${rec.date.substring(5)}</td><td>${rec.advice}</td><td>${rec.reason}</td><td>${rec.confidence}</td>`;
                     
-                    // 點選表格某一天時，在地圖上畫出當天的取像範圍
+                    // 11/23 的核心互動功能：點選表格某一天時，在地圖上畫出當天的取像範圍
                     tr.onclick = () => {
                         currentFootprints.clearLayers();
+                        // 篩選出點擊的那天的所有取像計畫
                         const dayAcqs = rawAcquisitions.filter(a => a.start_time.startsWith(rec.date));
+                        
                         dayAcqs.forEach(a => {
-                            const color = a.sensor === 'MSI' ? '#3388ff' : '#ff7800'; // 光學藍色，雷達橘色
+                            // MSI(光學)用藍色，SAR(雷達)用橘色
+                            const color = a.sensor === 'MSI' ? '#3388ff' : '#ff7800'; 
+                            
                             L.geoJSON(a.footprint, { 
                                 style: { color: color, weight: 2, fillOpacity: 0.1 } 
                             }).bindPopup(`<b>${a.platform} (${a.sensor})</b><br>時間: ${a.start_time.substring(11, 16)} UTC<br>過境方向: ${a.pass_direction}`).addTo(currentFootprints);
                         });
+                        
+                        // 自動縮放地圖到該範圍
                         if(dayAcqs.length > 0) {
                             map.fitBounds(currentFootprints.getBounds(), { padding: [20, 20] });
                         } else {
