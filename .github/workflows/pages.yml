@@ -1,0 +1,30 @@
+name: Deploy Frontend to GitHub Pages
+
+on:
+  push:
+    branches: ["main"]
+
+# 設定 GitHub Pages 所需的權限
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 取得程式碼
+        uses: actions/checkout@v4
+      - name: 設定 GitHub Pages
+        uses: actions/configure-pages@v5
+      - name: 打包前端資料夾
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: './frontend'  # 指定只部署 frontend 資料夾裡的內容
+      - name: 部署上線
+        id: deployment
+        uses: actions/deploy-pages@v4
