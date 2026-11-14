@@ -29,3 +29,11 @@ CREATE TABLE acquisitions (
 
 CREATE INDEX acquisitions_footprint_gix ON acquisitions USING GIST (footprint);
 CREATE INDEX acquisitions_start_idx ON acquisitions (start_time);
+
+CREATE TABLE weather_cache (
+  lat        NUMERIC(5,1),
+  lon        NUMERIC(5,1),
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  hourly     JSONB NOT NULL,
+  PRIMARY KEY (lat, lon)
+);
