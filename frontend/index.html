@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>衛星觀測時機推薦系統</title>
+    <!-- 引入 Leaflet 與 Leaflet.draw 的 CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <style>
+        body { margin: 0; display: flex; height: 100vh; font-family: sans-serif; flex-wrap: wrap; }
+        #map { flex: 1; min-width: 300px; height: 100%; }
+        #panel { width: 450px; height: 100%; padding: 15px; overflow-y: auto; box-sizing: border-box; background: #f9f9f9; border-left: 1px solid #ddd; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 14px; }
+        th { background-color: #eee; }
+        .gray-text { color: #aaa; }
+        .warning { color: #d9534f; font-weight: bold; margin-bottom: 10px; }
+        #status-board { font-size: 13px; margin-bottom: 20px; background: #fff; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
+        .loading { display: none; color: #0275d8; font-weight: bold; margin-bottom: 10px; }
+        tr.clickable { cursor: pointer; }
+        tr.clickable:hover { background-color: #e9ecef; }
+        
+        /* 手機版排版調整 */
+        @media (max-width: 768px) {
+            #panel { width: 100%; height: 50%; border-left: none; border-top: 2px solid #ddd; }
+            #map { height: 50%; }
+        }
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="panel">
+        <h2>衛星計畫狀態</h2>
+        <div id="status-board">載入中...</div>
+        
+        <h2>觀測機會推薦</h2>
+        <div id="loading" class="loading">資料分析中，請稍候...</div>
+        <div id="warnings"></div>
+        <table id="rec-table">
+            <thead>
+                <tr><th>日期</th><th>建議</th><th>理由</th><th>信心</th></tr>
+            </thead>
+            <tbody>
+                <tr><td colspan="4" style="text-align: center;">請在地圖上使用工具框選查詢範圍</td></tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- 引入 Leaflet 與 Leaflet.draw 的 JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+    <script>
+        const API_BASE = "http://localhost:8000";
+        
+        // 1. 地圖預設顯示台灣，底圖加上天氣資料標示
+        const map = L.map('map').setView([23.7, 120.9], 7);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors | 天氣資料：Open-Meteo'
+        }).addTo(map);
+
+        // 2. 設定繪圖工具 (只能畫矩形或多邊形)
+        const drawnItems = new L.FeatureGroup();
+        map.addLayer(drawnItems);
+        const drawControl = new L.Control.Draw({
+            draw: { polyline: false, circle: false, marker: false, circlemarker: false, polygon: true, rectangle: true },
+            edit: { featureGroup: drawnItems, remove: true }
+        });
+        map.addControl(drawControl);
+
+        let currentFootprints = L.featureGroup().addTo(map);
+        let rawAcquisitions = [];
+
+        // 3. 頁面載入時呼叫狀態 API
+        fetch(`${API_BASE}/api/status`)
+            .then(res => res.json())
+            .then(data => {
+                const sb = document.getElementById('status-board');
+                if (data.plans.length === 0) {
+                    sb.innerHTML = "目前無可用計畫";
+                    return;
+                }
+                sb.innerHTML = data.plans.map(p => {
+                    const countText = p.upcoming === 0 ? "<span style='color:red;'>無台灣取像</span>" : `${p.upcoming} 筆未來取像`;
+                    return `<div><b>${p.platform}</b> (${p.sensor}): 計畫發布至 ${p.valid_to.substring(0, 10)} - ${countText}</div>`;
+                }).join('');
+            }).catch(() => document.getElementById('status-board').innerText = "無法載入計畫狀態，請確認 API 是否啟動");
+
+        // 4. 畫完範圍後呼叫推薦 API
+        map.on(L.Draw.Event.CREATED, async function (e) {
+            drawnItems.clearLayers();
+            currentFootprints.clearLayers();
+            drawnItems.addLayer(e.layer);
+            
+            const geojson = e.layer.toGeoJSON().geometry;
+            const loading = document.getElementById('loading');
+            const warnings = document.getElementById('warnings');
+            const tbody = document.getElementById('rec-table').querySelector('tbody');
+            
+            loading.style.display = 'block';
+            warnings.innerHTML = '';
+            tbody.innerHTML = '';
+            rawAcquisitions = [];
+
+            try {
+                const res = await fetch(`${API_BASE}/api/opportunities`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ geometry: geojson, days: 10 })
+                });
+                
+                const data = await res.json();
+                
+                // 處理 422 等錯誤
+                if (!res.ok) {
+                    const errMsg = data.detail ? (typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail)) : "發生未知的錯誤";
+                    tbody.innerHTML = `<tr><td colspan="4" style="color:red; text-align:center;">錯誤：${errMsg}</td></tr>`;
+                    return;
+                }
+
+                // 處理警告訊息
+                if (data.warnings && data.warnings.length > 0) {
+                    warnings.innerHTML = data.warnings.map(w => `<div class="warning">⚠️ ${w}</div>`).join('');
+                }
+
+                rawAcquisitions = data.acquisitions;
+                
+                // 渲染推薦表格
+                data.recommendations.forEach(rec => {
+                    const tr = document.createElement('tr');
+                    tr.className = 'clickable';
+                    if (rec.advice === "計畫尚未公布") tr.classList.add("gray-text");
+                    
+                    tr.innerHTML = `<td>${rec.date.substring(5)}</td><td>${rec.advice}</td><td>${rec.reason}</td><td>${rec.confidence}</td>`;
+                    
+                    // 點選表格某一天時，在地圖上畫出當天的取像範圍
+                    tr.onclick = () => {
+                        currentFootprints.clearLayers();
+                        const dayAcqs = rawAcquisitions.filter(a => a.start_time.startsWith(rec.date));
+                        dayAcqs.forEach(a => {
+                            const color = a.sensor === 'MSI' ? '#3388ff' : '#ff7800'; // 光學藍色，雷達橘色
+                            L.geoJSON(a.footprint, { 
+                                style: { color: color, weight: 2, fillOpacity: 0.1 } 
+                            }).bindPopup(`<b>${a.platform} (${a.sensor})</b><br>時間: ${a.start_time.substring(11, 16)} UTC<br>過境方向: ${a.pass_direction}`).addTo(currentFootprints);
+                        });
+                        if(dayAcqs.length > 0) {
+                            map.fitBounds(currentFootprints.getBounds(), { padding: [20, 20] });
+                        } else {
+                            alert(`${rec.date} 當天沒有涵蓋此區域的取像範圍。`);
+                        }
+                    };
+                    tbody.appendChild(tr);
+                });
+
+            } catch (err) {
+                tbody.innerHTML = `<tr><td colspan="4" style="color:red; text-align:center;">網路連線失敗，請確認 API 伺服器正在執行。</td></tr>`;
+            } finally {
+                loading.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>

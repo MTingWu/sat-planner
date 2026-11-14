@@ -12,7 +12,7 @@ from shapely.geometry import shape
 
 from app.db import pool
 from app.services.weather import get_cloud, cloud_at
-# from app.services.recommend import recommend   # 下一階段才啟用
+from app.services.recommend import recommend
 
 TPE = ZoneInfo("Asia/Taipei")
 MAX_AREA_KM2 = 20000
@@ -114,6 +114,6 @@ def opportunities(req: AOIRequest):
         "aoi_km2": round(km2, 1),
         "plan_horizon": horizon,
         "acquisitions": rows,
-        # "recommendations": recommend(rows, datetime.now(timezone.utc), req.days, horizon),
+        "recommendations": recommend(rows, datetime.now(timezone.utc), req.days, horizon),
         "warnings": warnings,
     }
