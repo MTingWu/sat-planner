@@ -6,6 +6,7 @@ import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+import psycopg
 from psycopg.rows import dict_row
 from shapely.geometry import shape
 
@@ -85,20 +86,25 @@ def opportunities(req: AOIRequest):
 
     geom = json.dumps(req.geometry)
     warnings = []
-    with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-        km2 = cur.execute(AREA_SQL, (geom,)).fetchone()["km2"]
-        if km2 > MAX_AREA_KM2:
-            raise HTTPException(422, f"範圍 {km2:.0f} km² 超過上限 {MAX_AREA_KM2} km²")
-        rows = cur.execute(QUERY, {"geom": geom, "days": req.days}).fetchall()
-        horizon = plan_horizon(cur)
 
-        # 優雅降級：雲量取不到時仍回傳取像清單
-        center = aoi.centroid
-        try:
-            hourly = get_cloud(conn, center.y, center.x)
-        except httpx.HTTPError:
-            hourly = None
-            warnings.append("雲量預報暫時無法取得，建議僅依取像時間判斷")
+    try:
+        with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            km2 = cur.execute(AREA_SQL, (geom,)).fetchone()["km2"]
+            if km2 > MAX_AREA_KM2:
+                raise HTTPException(422, f"範圍 {km2:.0f} km² 超過上限 {MAX_AREA_KM2} km²")
+            rows = cur.execute(QUERY, {"geom": geom, "days": req.days}).fetchall()
+            horizon = plan_horizon(cur)
+
+            # 優雅降級：雲量取不到時仍回傳取像清單
+            center = aoi.centroid
+            try:
+                hourly = get_cloud(conn, center.y, center.x)
+            except httpx.HTTPError:
+                hourly = None
+                warnings.append("雲量預報暫時無法取得，建議僅依取像時間判斷")
+    except psycopg.Error:
+        # 當 PostGIS 拒絕不合法的空間資料時，統一回傳 422
+        raise HTTPException(422, "資料庫無法解析此 GeoJSON，請確認多邊形座標是否合法（例如起迄點須閉合）")
 
     for r in rows:
         r["cloud"] = (cloud_at(hourly, r["start_time"])
