@@ -2,7 +2,6 @@ import json
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-import httpx
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -16,11 +15,9 @@ from app.services.weather import get_cloud, cloud_at
 from app.services.recommend import recommend, MIN_COVERAGE
 from app.services.calendar import build_calendar
 
-import logging
-log = logging.getLogger("uvicorn.error")
-
 TPE = ZoneInfo("Asia/Taipei")
 MAX_AREA_KM2 = 20000
+STALE_HOURS = 12        # 雲量預報超過這個時間就提醒使用者
 
 app = FastAPI(title="Satellite Acquisition Planner")
 app.add_middleware(
@@ -208,17 +205,15 @@ def opportunities(req: AOIRequest):
             rows = cur.execute(QUERY, {"geom": geom, "days": req.days}).fetchall()
             horizon = plan_horizon(cur)
 
-            # 優雅降級：雲量取不到時仍回傳取像清單
+            # 雲量由排程預先抓好存在 weather_grid，這裡只讀資料庫
             center = aoi.centroid
-            try:
-                hourly = get_cloud(conn, center.y, center.x)
-            except httpx.HTTPError as e:
-                detail = ""
-                if isinstance(e, httpx.HTTPStatusError):
-                    detail = f" status={e.response.status_code} body={e.response.text[:300]}"
-                log.warning("雲量預報取得失敗：%r%s", e, detail)
-                hourly = None
-                warnings.append("雲量預報暫時無法取得，建議僅依取像時間判斷")
+            hourly, fetched_at = get_cloud(conn, center.y, center.x)
+            if hourly is None:
+                warnings.append("此範圍目前沒有雲量預報資料，建議僅依取像時間判斷")
+            else:
+                age_h = (datetime.now(timezone.utc) - fetched_at).total_seconds() / 3600
+                if age_h > STALE_HOURS:
+                    warnings.append(f"雲量預報是 {age_h:.0f} 小時前更新的，僅供參考")
     except psycopg.Error:
         # 當 PostGIS 拒絕不合法的空間資料時，統一回傳 422
         raise HTTPException(422, "資料庫無法解析此 GeoJSON，請確認多邊形座標是否合法（例如起迄點須閉合）")
