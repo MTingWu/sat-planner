@@ -1,4 +1,4 @@
-name: ingest-plans
+name: Prefetch weather
 
 on:
   schedule:
