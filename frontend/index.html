@@ -20,6 +20,7 @@
         .loading { display: none; color: #0275d8; font-weight: bold; margin-bottom: 10px; }
         tr.clickable { cursor: pointer; }
         tr.clickable:hover { background-color: #e9ecef; }
+        .sat-tooltip { font-size: 14px; padding: 6px; }
         
         /* 手機版排版調整 */
         @media (max-width: 768px) {
@@ -51,7 +52,6 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
     <script>
-        // 這裡已經設定好指向你的 Render 雲端 API
         const API_BASE = "https://sat-planner.onrender.com";
         
         // 1. 地圖預設顯示台灣，底圖加上天氣資料標示
@@ -139,15 +139,28 @@
                     tr.onclick = () => {
                         currentFootprints.clearLayers();
                         // 篩選出點擊的那天的所有取像計畫
-                        const dayAcqs = rawAcquisitions.filter(a => a.start_time.startsWith(rec.date));
+                        const dayAcqs = rawAcquisitions.filter(a => {
+                            // 1. 將後端傳來的任何時間字串轉成本地 Date 物件
+                            const dateObj = new Date(a.start_time);
+                            
+                            // 2. 強制以台灣時區輸出 YYYY-MM-DD 格式 (sv-SE 格式標準剛好符合)
+                            const twDateStr = dateObj.toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
+                            
+                            // 3. 拿純淨的台灣日期字串來跟表格的日期比對
+                            return twDateStr === rec.date;
+                        });
                         
                         dayAcqs.forEach(a => {
                             // MSI(光學)用藍色，SAR(雷達)用橘色
                             const color = a.sensor === 'MSI' ? '#3388ff' : '#ff7800'; 
                             
+                            // 改用 bindTooltip，設定 sticky: true 讓標籤跟著滑鼠跑
                             L.geoJSON(a.footprint, { 
                                 style: { color: color, weight: 2, fillOpacity: 0.1 } 
-                            }).bindPopup(`<b>${a.platform} (${a.sensor})</b><br>時間: ${a.start_time.substring(11, 16)} UTC<br>過境方向: ${a.pass_direction}`).addTo(currentFootprints);
+                            }).bindTooltip(
+                                `<b>${a.platform} (${a.sensor})</b><br>時間: ${a.start_time.substring(11, 16)} 台灣時間<br>過境方向: ${a.pass_direction}`, 
+                                { sticky: true, className: 'sat-tooltip' }
+                            ).addTo(currentFootprints);
                         });
                         
                         // 自動縮放地圖到該範圍
