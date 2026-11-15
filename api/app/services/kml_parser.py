@@ -1,8 +1,9 @@
 from lxml import etree
 from shapely.geometry import Polygon, MultiPolygon, box
+from app.config import INGEST_BOUNDS
 
 NS = {"kml": "http://www.opengis.net/kml/2.2"}
-TAIWAN = box(118, 21, 123, 27)
+TAIWAN = box(*INGEST_BOUNDS)
 
 def parse_kml(path):
     tree = etree.parse(path)
