@@ -5,4 +5,4 @@ httpx
 lxml
 shapely
 beautifulsoup4
-pytesthttpx
+pytest-httpx
