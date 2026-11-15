@@ -11,19 +11,21 @@
         body { margin: 0; display: flex; height: 100vh; font-family: sans-serif; flex-wrap: wrap; }
         #map { flex: 1; min-width: 300px; height: 100%; }
         
-        /* 1. 加入 resize: horizontal 讓面板可拖曳，並設定 min/max-width 防止縮放過度 */
         #panel { 
             width: 450px; 
             height: 100%; 
             padding: 15px; 
-            overflow: auto; /* 確保 resize 能正常運作 */
+            overflow: auto;
             box-sizing: border-box; 
             background: #f9f9f9; 
-            border-left: 1px solid #ddd;
-            resize: horizontal; 
-            min-width: 350px;
-            max-width: 50vw;
+            flex-shrink: 0;
         }
+        /* 地圖與面板之間的拖曳分隔線 */
+        #resizer {
+            width: 6px; flex-shrink: 0; cursor: col-resize;
+            background: #ddd; transition: background .15s; touch-action: none;
+        }
+        #resizer:hover, #resizer.dragging { background: #3388ff; }
         
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 14px; }
@@ -65,15 +67,15 @@
                 height: 50%; 
                 border-left: none; 
                 border-top: 2px solid #ddd; 
-                resize: none; /* 手機版不允許拖曳改變大小 */
-                max-width: 100%;
             }
+            #resizer { display: none; } /* 手機版上下排列，不提供拖曳 */
             #map { height: 50%; }
         }
     </style>
 </head>
 <body>
     <div id="map"></div>
+    <div id="resizer" title="拖曳調整面板寬度"></div>
     <div id="panel">
         <h2>衛星計畫狀態</h2>
         <div id="status-board">載入中...</div>
@@ -95,7 +97,11 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
     <script>
-        const API_BASE = "https://sat-planner.onrender.com";
+        // const API_BASE = "https://sat-planner.onrender.com";
+        // const API_BASE = "http://localhost:8000";
+        const API_BASE = location.hostname === "localhost"
+            ? "http://localhost:8000"
+            : "https://sat-planner.onrender.com";
         
         // 1. 地圖預設顯示台灣，底圖加上天氣資料標示
         const map = L.map('map').setView([23.7, 120.9], 7);
@@ -111,6 +117,38 @@
             edit: { featureGroup: drawnItems, remove: true }
         });
         map.addControl(drawControl);
+
+        // 拖曳分隔線調整右側面板寬度
+        (() => {
+            const resizer = document.getElementById('resizer');
+            const panel = document.getElementById('panel');
+            const MIN_W = 350, MAX_RATIO = 0.6;
+            let raf = null;
+
+            resizer.addEventListener('pointerdown', e => {
+                resizer.setPointerCapture(e.pointerId);
+                resizer.classList.add('dragging');
+                document.body.style.userSelect = 'none';
+            });
+            resizer.addEventListener('pointermove', e => {
+                if (!resizer.hasPointerCapture(e.pointerId)) return;
+                const w = Math.min(Math.max(window.innerWidth - e.clientX, MIN_W),
+                                   window.innerWidth * MAX_RATIO);
+                panel.style.width = `${w}px`;
+                // 通知 Leaflet 容器尺寸變了，否則會出現灰色未載入區塊
+                if (!raf) raf = requestAnimationFrame(() => { map.invalidateSize(); raf = null; });
+            });
+            const stop = e => {
+                if (!resizer.hasPointerCapture(e.pointerId)) return;
+                resizer.releasePointerCapture(e.pointerId);
+                resizer.classList.remove('dragging');
+                document.body.style.userSelect = '';
+                map.invalidateSize();
+            };
+            resizer.addEventListener('pointerup', stop);
+            resizer.addEventListener('pointercancel', stop);
+            window.addEventListener('resize', () => map.invalidateSize());
+        })();
 
         // 建立一個專屬圖層，用來放點擊後顯示的衛星範圍
         let currentFootprints = L.featureGroup().addTo(map);

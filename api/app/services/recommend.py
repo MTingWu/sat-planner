@@ -17,16 +17,9 @@ def recommend(acqs, now, days, horizon):
     """horizon：各感測器已公布計畫涵蓋到哪天，例如 {"MSI": date, "SAR": date}。"""
     by_day = defaultdict(list)
     for a in acqs:
-        # 1. 取得台灣時間的 datetime 物件
-        local_dt = a["start_time"].astimezone(TPE)
-        
-        # 2. 分群邏輯使用轉換後的台灣日期
+        # 以台灣日期分群；只讀不改 a，輸出格式由 main.py 負責
         if a["coverage"] >= MIN_COVERAGE:
-            by_day[local_dt.date()].append(a)
-            
-        # 把時間定格在 "2026-11-24T06:00:00"，防止 FastAPI 輸出時亂動時區
-        # 迎合前端 index.html 寫的 a.start_time.startsWith(rec.date)
-        a["start_time"] = local_dt.strftime("%Y-%m-%dT%H:%M:%S")
+            by_day[a["start_time"].astimezone(TPE).date()].append(a)
 
     today = now.astimezone(TPE).date()
     result = []

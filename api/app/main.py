@@ -139,6 +139,9 @@ def opportunities(req: AOIRequest):
     for r in rows:
         r["cloud"] = (cloud_at(hourly, r["start_time"])
                       if hourly and r["sensor"] == "MSI" else None)
+        # 保持 tz-aware，FastAPI 會輸出成 "2026-11-20T18:00:00+08:00"
+        # 前端不論在哪個時區解析都正確，substring(11, 16) 也仍是台灣時間
+        r["start_time"] = r["start_time"].astimezone(TPE)
 
     return {
         "aoi_km2": round(km2, 1),
