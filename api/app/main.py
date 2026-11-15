@@ -56,19 +56,22 @@ ORDER BY p.platform, p.valid_from DESC
 """
 
 HORIZON_SQL = """
-SELECT sensor, min(valid_to) AS horizon
-FROM (SELECT DISTINCT ON (platform) id, sensor, valid_to
+SELECT platform, sensor, valid_to AS horizon
+FROM (SELECT DISTINCT ON (platform) id, platform, sensor, valid_to
       FROM plan_files
       WHERE valid_to > now()
       ORDER BY platform, valid_from DESC) latest
 WHERE EXISTS (SELECT 1 FROM acquisitions a WHERE a.plan_file_id = latest.id)
-GROUP BY sensor
 """
 
 def plan_horizon(cur):
-    """各感測器已公布計畫涵蓋到哪天（台北日期），例如 {'MSI': date, 'SAR': date}。"""
+    """各衛星已公布計畫涵蓋到哪天（台北日期），例如 {'MSI': {'S2A': date, 'S2B': date}, 'SAR': {'S1C': date}}。"""
     rows = cur.execute(HORIZON_SQL).fetchall()
-    return {r["sensor"]: r["horizon"].astimezone(TPE).date() for r in rows}
+    horizon = {"MSI": {}, "SAR": {}}
+    for r in rows:
+        if r["sensor"] in horizon:
+            horizon[r["sensor"]][r["platform"]] = r["horizon"].astimezone(TPE).date()
+    return horizon
 
 @app.get("/api/status")
 def status():

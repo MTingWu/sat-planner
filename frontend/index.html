@@ -164,10 +164,8 @@
                         });
                         
                         // 自動縮放地圖到該範圍
-                        if(dayAcqs.length > 0) {
-                            map.fitBounds(currentFootprints.getBounds(), { padding: [20, 20] });
-                        } else {
-                            alert(`${rec.date} 當天沒有涵蓋此區域的取像範圍。`);
+                        if(dayAcqs.length === 0) {
+                            alert(`${rec.date} 當天依目前公布計畫沒有涵蓋此區域的取像範圍。`);
                         }
                     };
                     tbody.appendChild(tr);

@@ -35,8 +35,11 @@ def recommend(acqs, now, days, horizon):
         items = by_day.get(day, [])
         optical = [a for a in items if a["sensor"] == "MSI"]
         sar = [a for a in items if a["sensor"] == "SAR"]
-        optical_known = day <= horizon.get("MSI", today)
-        sar_known = day <= horizon.get("SAR", today)
+
+        # 找出當天「尚未發布計畫」的衛星清單
+        missing_opt = [p for p, d in horizon.get("MSI", {}).items() if day > d]
+        missing_sar = [p for p, d in horizon.get("SAR", {}).items() if day > d]
+        all_missing = missing_opt + missing_sar
         
         best = min(optical, key=lambda a: a["cloud"] if a["cloud"] is not None else 101, default=None)
         best_sar = sar[0] if sar else None
@@ -49,19 +52,24 @@ def recommend(acqs, now, days, horizon):
             advice = f"優先雷達 ({best_sar['platform']})"
             if optical:
                 reason = f"光學 ({best['platform']}) 雲量偏高，改用雷達不受影響"
-            elif optical_known:
+            elif not missing_opt:
                 reason = "當天無光學衛星過境"
             else:
-                reason = "光學計畫尚未公布"
+                reason = f"光學 ({', '.join(missing_opt)}) 計畫尚未公布"
         elif best:
             advice = f"光學 ({best['platform']})，但需留意雲量"
             reason = f"預報雲量 {best['cloud']}%" if best["cloud"] is not None else "超出雲量預報範圍"
-        elif not optical_known and not sar_known:
-            advice = "超過計畫預報範圍"
-            reason = "官方尚未發布此日期的觀測軌跡"
+        elif all_missing:
+            advice = "部分計畫未公布"
+            if not missing_sar and missing_opt:
+                reason = f"已確認無雷達過境，但光學 ({', '.join(missing_opt)}) 計畫尚未發布"
+            elif not missing_opt and missing_sar:
+                reason = f"已確認無光學過境，但雷達 ({', '.join(missing_sar)}) 計畫尚未發布"
+            else:
+                reason = f"部分衛星 ({', '.join(all_missing)}) 計畫尚未發布，仍有觀測機會"
         else:
             advice = "當日無觀測機會"
-            reason = "沒有涵蓋此區域的衛星軌跡"
+            reason = "已確認所有衛星皆未涵蓋此區域"
 
         result.append({
             "date": day.isoformat(),
