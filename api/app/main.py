@@ -45,6 +45,7 @@ WHERE a.start_time BETWEEN now() AND now() + make_interval(days => %(days)s)
 ORDER BY a.start_time
 """
 
+# 取得各衛星的基本狀態
 STATUS_SQL = """
 SELECT DISTINCT ON (p.platform)
        p.platform, p.sensor, p.valid_from, p.valid_to, p.fetched_at,
@@ -53,6 +54,22 @@ SELECT DISTINCT ON (p.platform)
 FROM plan_files p
 WHERE p.valid_to > now()
 ORDER BY p.platform, p.valid_from DESC
+"""
+
+# 新增：取得未來 14 天內，每天各衛星是否有涵蓋台灣範圍
+CALENDAR_SQL = """
+WITH tw_bounds AS (
+  SELECT ST_MakeEnvelope(119.3, 21.8, 122.1, 25.4, 4326) AS geom
+)
+SELECT 
+    a.platform,
+    a.sensor,
+    DATE(a.start_time AT TIME ZONE 'Asia/Taipei') as acq_date,
+    bool_or(ST_Intersects(a.footprint, tw_bounds.geom)) as hits_taiwan
+FROM acquisitions a, tw_bounds
+WHERE a.start_time BETWEEN now() AND now() + interval '14 days'
+GROUP BY a.platform, a.sensor, acq_date
+ORDER BY a.platform, acq_date;
 """
 
 HORIZON_SQL = """
@@ -76,7 +93,16 @@ def plan_horizon(cur):
 @app.get("/api/status")
 def status():
     with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
-        return {"plans": cur.execute(STATUS_SQL).fetchall()}
+        plans = cur.execute(STATUS_SQL).fetchall()
+        calendar_data = cur.execute(CALENDAR_SQL).fetchall()
+        
+        # 將日曆資料依衛星重組
+        calendar = defaultdict(dict)
+        for row in calendar_data:
+            date_str = row["acq_date"].isoformat()
+            calendar[row["platform"]][date_str] = row["hits_taiwan"]
+            
+        return {"plans": plans, "calendar": calendar}
 
 @app.post("/api/opportunities")
 def opportunities(req: AOIRequest):

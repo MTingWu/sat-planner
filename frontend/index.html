@@ -10,10 +10,33 @@
     <style>
         body { margin: 0; display: flex; height: 100vh; font-family: sans-serif; flex-wrap: wrap; }
         #map { flex: 1; min-width: 300px; height: 100%; }
-        #panel { width: 450px; height: 100%; padding: 15px; overflow-y: auto; box-sizing: border-box; background: #f9f9f9; border-left: 1px solid #ddd; }
+        
+        /* 1. 加入 resize: horizontal 讓面板可拖曳，並設定 min/max-width 防止縮放過度 */
+        #panel { 
+            width: 450px; 
+            height: 100%; 
+            padding: 15px; 
+            overflow: auto; /* 確保 resize 能正常運作 */
+            box-sizing: border-box; 
+            background: #f9f9f9; 
+            border-left: 1px solid #ddd;
+            resize: horizontal; 
+            min-width: 350px;
+            max-width: 50vw;
+        }
+        
         table { width: 100%; border-collapse: collapse; margin-top: 10px; }
         th, td { border: 1px solid #ddd; padding: 8px; text-align: left; font-size: 14px; }
         th { background-color: #eee; }
+        
+        /* 2. 鎖定表頭 (th) 與第1欄(日期)、第4欄(信心)，強制不換行 */
+        th, 
+        td:nth-child(1), 
+        td:nth-child(4) {
+            white-space: nowrap;
+            word-break: keep-all;
+        }
+
         .gray-text { color: #aaa; }
         .warning { color: #d9534f; font-weight: bold; margin-bottom: 10px; }
         #status-board { font-size: 13px; margin-bottom: 20px; background: #fff; padding: 10px; border: 1px solid #ddd; border-radius: 4px; }
@@ -21,10 +44,30 @@
         tr.clickable { cursor: pointer; }
         tr.clickable:hover { background-color: #e9ecef; }
         .sat-tooltip { font-size: 14px; padding: 6px; }
+
+        /* 日曆視圖的樣式 */
+        .calendar-container { margin-bottom: 10px; padding: 10px; background: #fff; border: 1px solid #ddd; border-radius: 4px; }
+        .sat-title { font-weight: bold; margin-bottom: 5px; font-size: 14px; }
+        .sat-subtitle { font-size: 12px; color: #666; margin-bottom: 8px; }
+        .days-grid { display: flex; flex-wrap: wrap; gap: 4px; }
+        .day-box { 
+            width: 24px; height: 24px; display: flex; align-items: center; justify-content: center; 
+            font-size: 11px; color: white; border-radius: 3px; cursor: help;
+        }
+        .day-hit { background-color: #28a745; }    /* 綠色：有拍到台灣 */
+        .day-miss { background-color: #6c757d; }   /* 灰色：有過境但沒拍到台灣 */
+        .day-none { background-color: #f8f9fa; border: 1px dashed #ccc; color: #999; } /* 空白：無計畫或無過境 */
         
         /* 手機版排版調整 */
         @media (max-width: 768px) {
-            #panel { width: 100%; height: 50%; border-left: none; border-top: 2px solid #ddd; }
+            #panel { 
+                width: 100%; 
+                height: 50%; 
+                border-left: none; 
+                border-top: 2px solid #ddd; 
+                resize: none; /* 手機版不允許拖曳改變大小 */
+                max-width: 100%;
+            }
             #map { height: 50%; }
         }
     </style>
@@ -73,7 +116,7 @@
         let currentFootprints = L.featureGroup().addTo(map);
         let rawAcquisitions = [];
 
-        // 3. 頁面載入時呼叫狀態 API
+        // 3. 頁面載入時呼叫狀態 API，並渲染日曆視圖
         fetch(`${API_BASE}/api/status`)
             .then(res => res.json())
             .then(data => {
@@ -82,11 +125,49 @@
                     sb.innerHTML = "目前無可用計畫";
                     return;
                 }
+                
+                // 產生未來 14 天的日期陣列
+                const today = new Date();
+                const dateList = [];
+                for(let i=0; i<14; i++) {
+                    const d = new Date(today);
+                    d.setDate(today.getDate() + i);
+                    dateList.push(d.toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' }));
+                }
+
                 sb.innerHTML = data.plans.map(p => {
-                    const countText = p.upcoming === 0 ? "<span style='color:red;'>無台灣取像</span>" : `${p.upcoming} 筆未來取像`;
-                    return `<div><b>${p.platform}</b> (${p.sensor}): 計畫發布至 ${p.valid_to.substring(0, 10)} - ${countText}</div>`;
+                    const calData = data.calendar[p.platform] || {};
+                    let gridHtml = `<div class="days-grid">`;
+                    
+                    dateList.forEach(dateStr => {
+                        const dayNum = dateStr.substring(8, 10);
+                        if (dateStr > p.valid_to.substring(0, 10)) {
+                            // 超出計畫範圍
+                            gridHtml += `<div class="day-box day-none" title="${dateStr}: 計畫尚未公布">${dayNum}</div>`;
+                        } else if (calData[dateStr] === true) {
+                            // 有過境且涵蓋台灣
+                            gridHtml += `<div class="day-box day-hit" title="${dateStr}: 將拍到台灣區域">${dayNum}</div>`;
+                        } else if (calData[dateStr] === false) {
+                            // 有過境但沒拍到台灣
+                            gridHtml += `<div class="day-box day-miss" title="${dateStr}: 未涵蓋台灣區域">${dayNum}</div>`;
+                        } else {
+                            // 當天完全沒過境
+                            gridHtml += `<div class="day-box day-none" title="${dateStr}: 無過境軌跡">${dayNum}</div>`;
+                        }
+                    });
+                    gridHtml += `</div>`;
+
+                    return `
+                    <div class="calendar-container">
+                        <div class="sat-title">${p.platform} (${p.sensor})</div>
+                        <div class="sat-subtitle">計畫更新至：${p.valid_to.substring(0, 10)}</div>
+                        ${gridHtml}
+                    </div>`;
                 }).join('');
-            }).catch(() => document.getElementById('status-board').innerText = "無法載入計畫狀態，請確認 API 是否啟動");
+            }).catch(err => {
+                console.error(err);
+                document.getElementById('status-board').innerText = "無法載入計畫狀態，請確認 API 是否啟動";
+            });
 
         // 4. 畫完範圍後呼叫推薦 API
         map.on(L.Draw.Event.CREATED, async function (e) {
