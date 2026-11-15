@@ -43,15 +43,17 @@ def recommend(acqs, now, days, horizon):
             reason = f"預報雲量 {best['cloud']}%，取像條件佳"
         elif best_sar:
             advice = f"優先雷達 ({best_sar['platform']})"
-            if optical:
-                reason = f"光學 ({best['platform']}) 雲量偏高，改用雷達不受影響"
+            if optical and best["cloud"] is None:
+                reason = f"光學 ({best['platform']}) 沒有雲量預報可參考，雷達不受天氣影響"
+            elif optical:
+                reason = f"光學 ({best['platform']}) 預報雲量 {best['cloud']}% 偏高，改用雷達不受影響"
             elif not missing_opt:
                 reason = "當天無光學衛星過境"
             else:
                 reason = f"光學 ({', '.join(missing_opt)}) 計畫尚未公布"
         elif best:
             advice = f"光學 ({best['platform']})，但需留意雲量"
-            reason = f"預報雲量 {best['cloud']}%" if best["cloud"] is not None else "超出雲量預報範圍"
+            reason = f"預報雲量 {best['cloud']}%" if best["cloud"] is not None else "沒有雲量預報可參考"
         elif all_missing:
             advice = "部分計畫未公布"
             if not missing_sar and missing_opt:

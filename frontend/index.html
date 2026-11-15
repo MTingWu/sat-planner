@@ -4,135 +4,204 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>衛星觀測日曆</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
     <style>
         :root {
-            --sar: #e8590c;          /* 雷達：與地圖 footprint 同色 */
-            --msi: #1971c2;          /* 光學 */
-            --ink: #1f2933;
-            --muted: #6b7684;
-            --line: #dde1e6;
-            --panel: #fafbfc;
-            --pending: #b8bfc7;      /* 計畫尚未公布 */
+            --ink: #1d2a35;          /* 地圖墨線 */
+            --ink-soft: #5d6b76;
+            --paper: #f4f6f5;        /* 製圖用紙 */
+            --rule: #d3dad8;
+            --sea: #e6ebea;
+            --sar: #5b4b8a;          /* 雷達：灰紫 */
+            --sar-2: #7d6eaa;
+            --msi: #0f7b6c;          /* 光學：青綠 */
+            --mark: #d9a21b;         /* 測量黃：今天、選取 */
+            --alert: #a63d2f;
         }
         * { box-sizing: border-box; }
+        html, body { height: 100%; }
         body {
-            margin: 0; display: flex; height: 100vh; flex-wrap: wrap;
-            font-family: system-ui, "Noto Sans TC", "Microsoft JhengHei", sans-serif;
-            color: var(--ink);
+            margin: 0; display: flex; flex-wrap: wrap; color: var(--ink);
+            font-family: "Noto Sans TC", system-ui, "Microsoft JhengHei", sans-serif;
+            font-size: 14px; line-height: 1.5;
+            font-variant-numeric: tabular-nums;
         }
-        #map { flex: 1; min-width: 300px; height: 100%; }
+        button { font: inherit; color: inherit; }
+        :focus-visible { outline: 2px solid var(--mark); outline-offset: 2px; }
+
+        /* ---------- 地圖 ---------- */
+        #map { flex: 1; min-width: 300px; height: 100%; background: var(--sea); }
+        .basemap { filter: grayscale(1) contrast(.88) brightness(1.06); }
+        .leaflet-tooltip.strip-tip {
+            font-family: inherit; font-size: 13px; color: var(--ink);
+            border: 1px solid var(--ink); border-radius: 0; box-shadow: none; padding: 4px 8px;
+        }
+        /* 雷達條帶用斜線網紋，光學用實色：與日曆標籤同一套語言 */
+        path.fp-sar { fill: url(#hatch-sar); }
+        path.fp-dim { opacity: .25; }
 
         #resizer {
-            width: 6px; flex-shrink: 0; cursor: col-resize; touch-action: none;
-            background: var(--line); transition: background .15s;
+            width: 5px; flex-shrink: 0; cursor: col-resize; touch-action: none;
+            background: var(--rule); transition: background .15s;
         }
-        #resizer:hover, #resizer.dragging { background: var(--msi); }
+        #resizer:hover, #resizer.dragging { background: var(--ink-soft); }
 
+        /* ---------- 面板 ---------- */
         #panel {
-            width: 450px; height: 100%; flex-shrink: 0; overflow: auto;
-            padding: 16px 18px 24px; background: var(--panel);
+            width: 460px; height: 100%; flex-shrink: 0; overflow-y: auto;
+            background: var(--paper); padding: 20px 22px 32px;
         }
-        h1 { font-size: 20px; margin: 0 0 6px; }
-        h2 { font-size: 16px; margin: 0 0 10px; }
+        header h1 { font-size: 19px; font-weight: 700; margin: 0; letter-spacing: .02em; }
+        .scope { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+        .scope .label { color: var(--ink-soft); }
+        .scope strong { font-weight: 500; }
+        .actions { margin-top: 12px; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+        .btn {
+            border: 1px solid var(--ink); background: var(--ink); color: #fff;
+            padding: 5px 12px; cursor: pointer; border-radius: 2px;
+        }
+        .btn.ghost { background: transparent; color: var(--ink); }
+        .btn:hover { background: #2c3d4b; color: #fff; }
+        .actions .note { font-size: 12px; color: var(--ink-soft); }
+        .warning { margin-top: 12px; padding: 6px 10px; border-left: 3px solid var(--alert); color: var(--alert); font-size: 13px; background: #fff; }
 
-        /* 查詢範圍 */
-        #scope { font-size: 14px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-        #scope strong { font-weight: 600; }
-        .hint { font-size: 13px; color: var(--muted); margin: 4px 0 14px; }
-        button.link {
-            font: inherit; font-size: 13px; color: var(--msi); background: none;
-            border: 1px solid var(--msi); border-radius: 4px; padding: 2px 8px; cursor: pointer;
+        section { border-top: 1px solid var(--ink); margin-top: 20px; padding-top: 12px; }
+        section > h2 {
+            font-size: 13px; font-weight: 700; margin: 0 0 10px;
+            display: flex; justify-content: space-between; align-items: baseline;
         }
-        .warning {
-            font-size: 13px; color: #b42318; background: #fef3f2; border: 1px solid #fecdca;
-            border-radius: 4px; padding: 8px 10px; margin-bottom: 10px;
-        }
+        section > h2 small { font-weight: 400; color: var(--ink-soft); font-size: 12px; }
 
-        /* 圖例 */
-        .legend { font-size: 12px; color: var(--muted); margin-bottom: 10px; line-height: 1.9; }
-        .legend .row { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; }
-        .legend .item { display: inline-flex; align-items: center; gap: 4px; }
+        /* ---------- 接下來的觀測機會 ---------- */
+        .next { list-style: none; margin: 0; padding: 0; }
+        .next li + li { border-top: 1px solid var(--rule); }
+        .next button {
+            width: 100%; background: none; border: 0; padding: 8px 0; cursor: pointer; text-align: left;
+            display: grid; grid-template-columns: 74px 52px 1fr; gap: 0 12px; align-items: center;
+        }
+        .next button:hover .when-date { text-decoration: underline; }
+        .when-date { font-size: 18px; font-weight: 700; line-height: 1.2; }
+        .when-date small { display: block; font-size: 12px; font-weight: 400; color: var(--ink-soft); }
+        .when-time { font-size: 16px; }
+        .next .what { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .next .what .line { display: flex; gap: 8px; align-items: center; }
+        .next .where { font-size: 12px; color: var(--ink-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .empty { color: var(--ink-soft); font-size: 13px; margin: 0; }
 
-        /* 標記：形狀＝感測器，填色＝狀態，位置＝衛星（每格順序固定） */
-        .mk {
-            display: inline-block; width: 9px; height: 9px; flex-shrink: 0;
-            border: 1.5px solid var(--c);
+        /* ---------- 衛星標籤：雷達斜線、光學實色 ---------- */
+        .chip {
+            display: inline-flex; align-items: center; justify-content: center;
+            min-width: 24px; height: 17px; padding: 0 3px; font-size: 11px; font-weight: 700;
+            line-height: 1; border: 1.5px solid var(--c); color: var(--c); background: #fff;
+            letter-spacing: .02em; font-style: normal;
         }
-        .mk.sar { --c: var(--sar); border-radius: 1px; }
-        .mk.msi { --c: var(--msi); border-radius: 50%; }
-        .mk.hit { background: var(--c); }
-        .mk.partial { background: linear-gradient(to top, var(--c) 50%, transparent 50%); }
-        .mk.near { background: transparent; }
-        .mk.none { visibility: hidden; }
-        .mk.unpublished { --c: var(--pending); border-style: dashed; }
+        .chip.sar { --c: var(--sar); }
+        .chip.msi { --c: var(--msi); }
+        .chip.hit.msi { background: var(--msi); color: #fff; }
+        .chip.hit.sar {
+            color: #fff;
+            background: repeating-linear-gradient(135deg, var(--sar) 0 3px, var(--sar-2) 3px 5px);
+        }
+        .chip.near { border-style: dashed; border-width: 1px; opacity: .55; font-weight: 500; }
+        .tag { font-size: 12px; color: var(--ink-soft); }
+        .tag.cloudy { color: var(--alert); }
 
-        /* 日曆 */
-        .weekdays, .cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }
-        .weekdays { font-size: 12px; color: var(--muted); text-align: center; margin-bottom: 3px; }
-        .cal-grid.loading { opacity: .45; pointer-events: none; }
-        .cell {
-            min-height: 54px; padding: 4px 4px 5px; background: #fff;
-            border: 1px solid var(--line); border-radius: 3px; cursor: pointer;
-            display: flex; flex-direction: column; gap: 5px;
+        /* ---------- 日曆 ---------- */
+        .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12px; color: var(--ink-soft); margin-bottom: 10px; }
+        .legend span { display: inline-flex; align-items: center; gap: 5px; }
+        .weekdays, .grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); }
+        .weekdays { font-size: 12px; color: var(--ink-soft); padding-bottom: 4px; border-bottom: 1px solid var(--rule); }
+        .weekdays span { padding-left: 4px; }
+        .grid { transition: opacity .15s; }
+        .grid.loading { opacity: .4; pointer-events: none; }
+        .day {
+            min-height: 62px; padding: 4px; cursor: pointer; background: none; border: 0;
+            border-bottom: 1px solid var(--rule); border-right: 1px solid var(--rule);
+            display: flex; flex-direction: column; align-items: flex-start; gap: 3px; text-align: left;
         }
-        .cell:hover { border-color: var(--muted); }
-        .cell:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
-        .cell.selected { border: 2px solid var(--ink); padding: 3px 3px 4px; }
-        .cell.pad { background: transparent; border: none; cursor: default; }
-        .cell .date { font-size: 12px; line-height: 1; }
-        .cell.today { background: #eef4fb; }
-        .cell.today .date { font-weight: 700; }
-        .cell .marks { display: flex; flex-wrap: wrap; gap: 3px; }
-        .cell .marks .mk { cursor: pointer; }
+        .day:nth-child(7n) { border-right: 0; }
+        .day:hover { background: #fff; }
+        .day.pad { cursor: default; background: none; }
+        .day .num { font-size: 12px; line-height: 1.3; padding: 0 2px; }
+        .day.today .num { box-shadow: inset 0 -3px 0 var(--mark); font-weight: 700; }
+        .day.selected { background: #fff; outline: 2px solid var(--ink); outline-offset: -2px; }
+        .day .chips { display: flex; flex-wrap: wrap; gap: 2px; }
+        .horizon { font-size: 12px; color: var(--ink-soft); margin-top: 8px; }
 
-        /* 當日明細 */
-        #day-detail { margin-top: 18px; }
-        #day-detail .empty { font-size: 13px; color: var(--muted); }
-        .advice {
-            font-size: 14px; background: #fff; border: 1px solid var(--line); border-left: 3px solid var(--ink);
-            padding: 8px 10px; margin-bottom: 12px; border-radius: 3px;
+        /* ---------- 當日明細 ---------- */
+        .advice { margin: 0 0 10px; }
+        .advice strong { font-weight: 700; }
+        .advice span { display: block; color: var(--ink-soft); font-size: 13px; }
+        .passes { list-style: none; margin: 0; padding: 0; }
+        .pass {
+            width: 100%; background: none; border: 0; border-top: 1px solid var(--rule);
+            padding: 8px 6px; cursor: pointer; text-align: left;
+            display: grid; grid-template-columns: 34px 48px 1fr; gap: 0 10px; align-items: start;
         }
-        .advice .reason { display: block; color: var(--muted); font-size: 13px; margin-top: 2px; }
-        .sat-list { list-style: none; margin: 0; padding: 0; }
-        .sat-row { padding: 9px 0; border-top: 1px solid var(--line); font-size: 14px; }
-        .sat-row .head { display: flex; align-items: center; gap: 8px; }
-        .sat-row .state { color: var(--muted); font-size: 13px; }
-        .acq {
-            display: block; width: 100%; text-align: left; font: inherit; font-size: 13px;
-            margin-top: 6px; padding: 6px 8px 6px 25px; background: #fff; color: var(--ink);
-            border: 1px solid var(--line); border-radius: 3px; cursor: pointer;
-        }
-        .acq:hover { border-color: var(--muted); }
-        .acq.active { border-color: var(--ink); box-shadow: inset 3px 0 0 var(--ink); }
-        .acq .meta { display: flex; flex-wrap: wrap; gap: 2px 12px; }
-        .acq .where { color: var(--muted); }
-        .sat-tooltip { font-size: 13px; }
+        .pass:hover, .pass.hl { background: #fff; }
+        .pass .t { font-size: 15px; }
+        .pass .d { display: flex; flex-direction: column; font-size: 13px; }
+        .pass .d .sub { color: var(--ink-soft); font-size: 12px; }
+        .quiet { margin-top: 10px; font-size: 12px; color: var(--ink-soft); }
 
         @media (max-width: 768px) {
-            #map { height: 50%; }
+            #map { height: 45%; flex-basis: 100%; }
             #resizer { display: none; }
-            #panel { width: 100%; height: 50%; border-top: 2px solid var(--line); }
+            #panel { width: 100%; height: 55%; border-top: 1px solid var(--ink); }
         }
-        @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+        @media (prefers-reduced-motion: reduce) { * { transition: none !important; scroll-behavior: auto !important; } }
     </style>
 </head>
 <body>
+    <!-- 雷達條帶的斜線網紋，地圖上的 path 以 CSS fill: url(#hatch-sar) 引用 -->
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+        <defs>
+            <pattern id="hatch-sar" patternUnits="userSpaceOnUse" width="7" height="7" patternTransform="rotate(45)">
+                <rect width="7" height="7" fill="#5b4b8a" fill-opacity=".08"/>
+                <line x1="0" y1="0" x2="0" y2="7" stroke="#5b4b8a" stroke-width="2.2" stroke-opacity=".55"/>
+            </pattern>
+        </defs>
+    </svg>
+
     <div id="map"></div>
     <div id="resizer" title="拖曳調整面板寬度"></div>
     <div id="panel">
-        <h1>衛星觀測日曆</h1>
-        <div id="scope"></div>
-        <p class="hint">在地圖上框選範圍，日曆會改以該範圍重新計算。淺藍底的格子是今天。</p>
-        <div id="warnings"></div>
+        <header>
+            <h1>衛星觀測日曆</h1>
+            <div class="scope" id="scope"></div>
+            <div class="actions">
+                <button class="btn" id="draw-rect">框選範圍</button>
+                <button class="btn ghost" id="reset-aoi" hidden>改回台灣</button>
+                <span class="note">也可用地圖左側工具畫多邊形</span>
+            </div>
+            <div id="warnings"></div>
+        </header>
 
-        <div class="legend" id="legend"></div>
-        <div class="weekdays"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
-        <div id="calendar" class="cal-grid"></div>
+        <section>
+            <h2>接下來的觀測機會 <small id="next-note"></small></h2>
+            <ul class="next" id="next"></ul>
+        </section>
 
-        <section id="day-detail">
-            <p class="empty">點選日期，查看當天每顆衛星的狀態。</p>
+        <section>
+            <h2>未來 14 天 <small>點日期看當天所有過境</small></h2>
+            <div class="legend">
+                <span><i class="chip sar hit">1C</i>雷達拍到</span>
+                <span><i class="chip msi hit">2B</i>光學拍到</span>
+                <span><i class="chip msi">2B</i>部分拍到</span>
+                <span><i class="chip msi near">2B</i>經過附近</span>
+            </div>
+            <div class="weekdays"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
+            <div class="grid" id="calendar"></div>
+            <p class="horizon" id="horizon"></p>
+        </section>
+
+        <section id="detail-section">
+            <h2 id="detail-title">當天過境</h2>
+            <div id="detail"><p class="empty">點選日期，地圖會畫出當天所有過境條帶。</p></div>
         </section>
     </div>
 
@@ -143,132 +212,128 @@
         ? "http://localhost:8000"
         : "https://sat-planner.onrender.com";
     const DAYS = 14;
+    const NEXT_COUNT = 5;
+    const CLOUDY = 30;                     // 與後端 CLEAR_SKY 一致
 
-    const STATUS_TEXT = {
-        hit: "拍到", partial: "部分拍到", near: "經過附近，未涵蓋",
-        none: "無過境", unpublished: "計畫尚未公布",
-    };
-    const DIRECTION_TEXT = { ascending: "升軌", descending: "降軌" };
-    const SENSOR_TEXT = { SAR: "雷達", MSI: "光學" };
-    const WEEKDAY = ["日", "一", "二", "三", "四", "五", "六"];
+    const STATUS_TEXT = { hit: "拍到", partial: "部分拍到", near: "經過附近", none: "無過境", unpublished: "計畫未公布" };
+    const DIR = { ascending: "升軌", descending: "降軌" };
+    const SENSOR = { SAR: "雷達", MSI: "光學" };
+    const WD = ["日", "一", "二", "三", "四", "五", "六"];
 
-    // ---------- 狀態 ----------
     const state = {
-        aoi: null,            // 自訂 AOI 的 GeoJSON geometry；null 表示預設台灣
-        cal: null,            // /api/calendar 回應
-        recByDate: {},        // 推薦結論（只有自訂 AOI 時才有）
-        cloudById: {},        // MSI 雲量，依取像 id
-        selectedDate: null,
-        selectedAcq: null,
+        aoi: null, cal: null, recByDate: {}, cloudById: {},
+        selectedDate: null, highlight: null,
     };
     const footprintCache = new Map();
 
     // ---------- 地圖 ----------
-    const map = L.map('map').setView([23.7, 120.9], 7);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        attribution: '&copy; OpenStreetMap contributors | 天氣資料：Open-Meteo | 行政區界：內政部國土測繪中心'
+    const map = L.map('map', { zoomControl: true }).setView([23.7, 120.9], 7);
+
+    // 底圖：國土測繪中心「臺灣通用電子地圖」，以 CSS 轉灰階讓條帶成為主角；載入失敗改用 OSM
+    const ATTR_NLSC = '底圖：<a href="https://maps.nlsc.gov.tw/">國土測繪中心</a>';
+    const ATTR_REST = '天氣：Open-Meteo｜行政區界：內政部國土測繪中心';
+    let basemap = L.tileLayer('https://wmts.nlsc.gov.tw/wmts/EMAP/default/GoogleMapsCompatible/{z}/{y}/{x}', {
+        maxZoom: 18, className: 'basemap', attribution: `${ATTR_NLSC}｜${ATTR_REST}`
     }).addTo(map);
+    let tileErrors = 0, tileLoaded = false;
+    basemap.on('tileload', () => { tileLoaded = true; });
+    basemap.on('tileerror', () => {
+        if (tileLoaded || ++tileErrors < 6) return;
+        map.removeLayer(basemap);
+        basemap = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            className: 'basemap', attribution: `&copy; OpenStreetMap contributors｜${ATTR_REST}`
+        }).addTo(map).bringToBack();
+    });
 
     const drawnItems = new L.FeatureGroup().addTo(map);
-    map.addControl(new L.Control.Draw({
-        draw: { polyline: false, circle: false, marker: false, circlemarker: false, polygon: true, rectangle: true },
+    const drawControl = new L.Control.Draw({
+        draw: {
+            polyline: false, circle: false, marker: false, circlemarker: false,
+            polygon: { shapeOptions: { color: '#1d2a35', weight: 2, fillOpacity: .05 } },
+            rectangle: { shapeOptions: { color: '#1d2a35', weight: 2, fillOpacity: .05 } },
+        },
         edit: { featureGroup: drawnItems, remove: true }
-    }));
+    });
+    map.addControl(drawControl);
     const presetLayer = L.geoJSON(null, {
-        style: { color: '#6b7684', weight: 1, dashArray: '4 3', fill: false }, interactive: false
+        style: { color: '#1d2a35', weight: 1, dashArray: '3 3', fill: false }, interactive: false
     }).addTo(map);
-    const footprintLayer = L.featureGroup().addTo(map);
+    const stripLayer = L.featureGroup().addTo(map);
+    const stripById = new Map();
 
     // ---------- 面板寬度拖曳 ----------
     (() => {
-        const resizer = document.getElementById('resizer');
-        const panel = document.getElementById('panel');
+        const rz = document.getElementById('resizer'), panel = document.getElementById('panel');
         let raf = null;
-        resizer.addEventListener('pointerdown', e => {
-            resizer.setPointerCapture(e.pointerId);
-            resizer.classList.add('dragging');
-            document.body.style.userSelect = 'none';
-        });
-        resizer.addEventListener('pointermove', e => {
-            if (!resizer.hasPointerCapture(e.pointerId)) return;
-            const w = Math.min(Math.max(window.innerWidth - e.clientX, 350), window.innerWidth * 0.6);
-            panel.style.width = `${w}px`;
+        rz.addEventListener('pointerdown', e => { rz.setPointerCapture(e.pointerId); rz.classList.add('dragging'); document.body.style.userSelect = 'none'; });
+        rz.addEventListener('pointermove', e => {
+            if (!rz.hasPointerCapture(e.pointerId)) return;
+            panel.style.width = `${Math.min(Math.max(window.innerWidth - e.clientX, 360), window.innerWidth * .6)}px`;
             if (!raf) raf = requestAnimationFrame(() => { map.invalidateSize(); raf = null; });
         });
         const stop = e => {
-            if (!resizer.hasPointerCapture(e.pointerId)) return;
-            resizer.releasePointerCapture(e.pointerId);
-            resizer.classList.remove('dragging');
-            document.body.style.userSelect = '';
-            map.invalidateSize();
+            if (!rz.hasPointerCapture(e.pointerId)) return;
+            rz.releasePointerCapture(e.pointerId); rz.classList.remove('dragging');
+            document.body.style.userSelect = ''; map.invalidateSize();
         };
-        resizer.addEventListener('pointerup', stop);
-        resizer.addEventListener('pointercancel', stop);
+        rz.addEventListener('pointerup', stop); rz.addEventListener('pointercancel', stop);
         window.addEventListener('resize', () => map.invalidateSize());
     })();
 
-    // ---------- 工具函式 ----------
+    // ---------- 工具 ----------
     async function api(path, body) {
-        const res = await fetch(`${API_BASE}${path}`, body === undefined ? {} : {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
-        });
+        const res = await fetch(`${API_BASE}${path}`, body === undefined ? {} :
+            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) {
-            const d = data.detail;
-            throw new Error(typeof d === 'string' ? d : `伺服器回應 ${res.status}`);
-        }
+        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `伺服器回應 ${res.status}`);
         return data;
     }
-    const sensorClass = s => s === 'SAR' ? 'sar' : 'msi';
-    const shortName = p => p.replace(/^S/, '');                    // S1C → 1C
-    const hhmm = iso => iso.substring(11, 16);                       // 後端已輸出台北時間
-    const pct = c => c <= 0 ? '0%' : c < 0.01 ? '<1%' : `${Math.round(c * 100)}%`;
-    const counties = (list, max = 3) => !list || !list.length ? '' :
-        list.length <= max ? list.join('、') : `${list.slice(0, max).join('、')} 等 ${list.length} 個縣市`;
-    function weekdayOf(dateStr) {                                    // 0 = 週日
-        const [y, m, d] = dateStr.split('-').map(Number);
-        return new Date(Date.UTC(y, m - 1, d)).getUTCDay();
-    }
-    function showWarnings(list) {
-        document.getElementById('warnings').innerHTML =
-            list.map(w => `<div class="warning">${w}</div>`).join('');
-    }
-    function scopeName() {
-        return state.aoi
-            ? `自訂框選範圍${state.cal?.aoi?.km2 != null ? `（${state.cal.aoi.km2} km²）` : ''}`
-            : '台灣（本島＋近岸離島）';
+    const short = p => p.replace(/^S/, '');
+    const sclass = s => s === 'SAR' ? 'sar' : 'msi';
+    const hhmm = iso => iso.substring(11, 16);
+    const pct = c => c <= 0 ? '0%' : c < .01 ? '<1%' : `${Math.round(c * 100)}%`;
+    const md = d => { const [, m, day] = d.split('-').map(Number); return `${m}/${day}`; };
+    const wd = d => { const [y, m, day] = d.split('-').map(Number); return new Date(Date.UTC(y, m - 1, day)).getUTCDay(); };
+    const listCounties = (l, max = 3) => !l?.length ? '' : l.length <= max ? l.join('、') : `${l.slice(0, max).join('、')} 等 ${l.length} 縣市`;
+    const platformOf = name => state.cal.platforms.find(p => p.platform === name);
+    const isHit = a => a.coverage > 0 && a.coverage >= state.cal.aoi.hit_threshold;
+    const chip = (p, cls) => `<i class="chip ${sclass(p.sensor)} ${cls}">${short(p.platform)}</i>`;
+
+    function warn(list) {
+        document.getElementById('warnings').innerHTML = list.map(w => `<div class="warning">${w}</div>`).join('');
     }
 
-    // ---------- 載入資料 ----------
+    // 把日曆資料攤平成取像清單，方便摘要與明細使用
+    function passesOf(date) {
+        const out = [];
+        for (const p of state.cal.platforms) {
+            for (const a of state.cal.calendar[date][p.platform].acquisitions || []) out.push({ ...a, p, date });
+        }
+        return out.sort((x, y) => x.start_time.localeCompare(y.start_time));
+    }
+
+    // ---------- 載入 ----------
     async function load() {
         const grid = document.getElementById('calendar');
         grid.classList.add('loading');
-        showWarnings([]);
-        footprintLayer.clearLayers();
-        state.selectedAcq = null;
+        warn([]);
+        clearStrips();
 
-        const body = state.aoi ? { geometry: state.aoi, days: DAYS } : { days: DAYS };
-        const calReq = api('/api/calendar', body);
+        const calReq = api('/api/calendar', state.aoi ? { geometry: state.aoi, days: DAYS } : { days: DAYS });
         const oppReq = state.aoi ? api('/api/opportunities', { geometry: state.aoi, days: DAYS }) : null;
-
         try {
             state.cal = await calReq;
         } catch (err) {
-            // 清空舊結果，避免畫面顯示的是上一個範圍的日曆
-            state.cal = null;
-            state.selectedDate = null;
-            grid.classList.remove('loading');
-            grid.innerHTML = '';
-            document.getElementById('legend').innerHTML = '';
-            document.getElementById('day-detail').innerHTML = '';
-            renderScope();
-            showWarnings([`無法載入日曆：${err.message}`]);
             oppReq?.catch(() => {});
+            state.cal = null; state.selectedDate = null;
+            grid.classList.remove('loading');
+            ['calendar', 'next', 'detail', 'horizon', 'next-note'].forEach(id => document.getElementById(id).innerHTML = '');
+            renderScope();
+            warn([`無法載入：${err.message}`]);
             return;
         }
 
-        state.recByDate = {};
-        state.cloudById = {};
+        state.recByDate = {}; state.cloudById = {};
         const warnings = [];
         if (oppReq) {
             try {
@@ -276,176 +341,204 @@
                 opp.recommendations.forEach(r => state.recByDate[r.date] = r);
                 opp.acquisitions.forEach(a => { if (a.cloud != null) state.cloudById[a.id] = a.cloud; });
                 warnings.push(...opp.warnings);
-            } catch (err) {
-                warnings.push(`無法取得觀測建議：${err.message}`);
-            }
+            } catch (err) { warnings.push(`無法取得觀測建議：${err.message}`); }
         }
-        showWarnings(warnings);
-
+        warn(warnings);
         grid.classList.remove('loading');
         if (!state.cal.dates.includes(state.selectedDate)) state.selectedDate = null;
-        renderScope();
-        renderLegend();
-        renderCalendar();
-        renderDetail();
+        renderScope(); renderNext(); renderCalendar(); renderDetail();
+        if (state.selectedDate) drawDay(state.selectedDate);
+        else if (state.aoi) map.fitBounds(drawnItems.getBounds(), { padding: [40, 40], maxZoom: 10 });
     }
 
-    // ---------- 繪製 ----------
+    // ---------- 繪製：面板 ----------
     function renderScope() {
-        const el = document.getElementById('scope');
-        el.innerHTML = `<span>查詢範圍：<strong>${scopeName()}</strong></span>` +
-            (state.aoi ? `<button class="link" id="reset-aoi">改回台灣</button>` : '');
-        document.getElementById('reset-aoi')?.addEventListener('click', resetAoi);
+        const km2 = state.cal?.aoi?.km2;
+        document.getElementById('scope').innerHTML = state.aoi
+            ? `<span class="label">查詢範圍</span><strong>自訂範圍${km2 != null ? `，${km2.toLocaleString()} km²` : ''}</strong>`
+            : `<span class="label">查詢範圍</span><strong>台灣本島與近岸離島</strong>`;
+        document.getElementById('reset-aoi').hidden = !state.aoi;
     }
 
-    function renderLegend() {
-        const plats = state.cal.platforms.map(p =>
-            `<span class="item"><span class="mk ${sensorClass(p.sensor)} hit"></span>${shortName(p.platform)}</span>`
-        ).join('');
-        const states = [['hit', '拍到'], ['partial', '部分拍到'], ['near', '經過附近，未涵蓋'], ['unpublished', '計畫未公布']]
-            .map(([s, t]) => `<span class="item"><span class="mk sar ${s}"></span>${t}</span>`).join('');
-        const rule = state.aoi ? '覆蓋框選範圍 50% 以上算拍到' : '覆蓋台灣 10% 以上算拍到';
-        document.getElementById('legend').innerHTML =
-            `<div class="row">每格依序：${plats}<span>（方形雷達、圓形光學）</span></div>` +
-            `<div class="row">${states}</div><div class="row">${rule}，沒有標記表示無過境。</div>`;
-    }
-
-    function markerTitle(p, entry) {
-        const lines = [`${p.platform} ${SENSOR_TEXT[p.sensor]}：${STATUS_TEXT[entry.status]}`];
-        (entry.acquisitions || []).forEach(a => {
-            let line = `${hhmm(a.start_time)} ${DIRECTION_TEXT[a.pass_direction] || ''}`;
-            if (a.coverage > 0) line += `，覆蓋 ${pct(a.coverage)}，${counties(a.counties)}`;
-            lines.push(line);
-        });
-        return lines.join('\n');
+    function renderNext() {
+        const list = state.cal.dates.flatMap(passesOf).filter(a => a.coverage > 0).slice(0, NEXT_COUNT);
+        document.getElementById('next-note').textContent =
+            state.aoi ? '覆蓋框選範圍一半以上算拍到' : '覆蓋台灣 10% 以上算拍到';
+        const ul = document.getElementById('next');
+        if (!list.length) {
+            ul.innerHTML = `<li><p class="empty">未來 ${DAYS} 天依已公布的計畫，沒有衛星拍到這個範圍。部分衛星的計畫還沒公布，可以過幾天再看。</p></li>`;
+            return;
+        }
+        ul.innerHTML = list.map(a => {
+            const cloud = state.cloudById[a.id];
+            const tags = [
+                isHit(a) ? '' : `<span class="tag">部分，覆蓋 ${pct(a.coverage)}</span>`,
+                cloud != null ? `<span class="tag${cloud > CLOUDY ? ' cloudy' : ''}">雲量 ${cloud}%</span>` : '',
+            ].join('');
+            return `<li><button data-date="${a.date}" data-id="${a.id}">
+                <span class="when-date">${md(a.date)}<small>週${WD[wd(a.date)]}</small></span>
+                <span class="when-time">${hhmm(a.start_time)}</span>
+                <span class="what">
+                    <span class="line">${chip(a.p, isHit(a) ? 'hit' : '')}<span>${SENSOR[a.p.sensor]}・${DIR[a.pass_direction] || ''}</span>${tags}</span>
+                    <span class="where">${listCounties(a.counties, 4)}</span>
+                </span></button></li>`;
+        }).join('');
     }
 
     function renderCalendar() {
-        const grid = document.getElementById('calendar');
         const { dates, platforms, calendar } = state.cal;
-        const lead = (weekdayOf(dates[0]) + 6) % 7;                  // 週一為第一欄
-        let html = '<div class="cell pad"></div>'.repeat(lead);
+        const lead = (wd(dates[0]) + 6) % 7;
+        let html = '<div class="day pad"></div>'.repeat(lead);
 
         dates.forEach((d, i) => {
-            const [, m, day] = d.split('-').map(Number);
-            const label = (i === 0 || day === 1) ? `${m}/${day}` : day;
-            const marks = platforms.map(p => {
-                const entry = calendar[d][p.platform];
-                return `<span class="mk ${sensorClass(p.sensor)} ${entry.status}" data-platform="${p.platform}"
-                              title="${markerTitle(p, entry)}"></span>`;
-            }).join('');
-            html += `<div class="cell${i === 0 ? ' today' : ''}${d === state.selectedDate ? ' selected' : ''}"
-                          data-date="${d}" role="button" tabindex="0"
-                          aria-label="${m} 月 ${day} 日（週${WEEKDAY[weekdayOf(d)]}）${i === 0 ? '，今天' : ''}"
-                          ${i === 0 ? 'title="今天"' : ''}>
-                        <span class="date">${label}</span><span class="marks">${marks}</span></div>`;
+            const chips = passesOf(d)
+                .reduce((acc, a) => acc.some(x => x.p.platform === a.p.platform) ? acc : [...acc, a], [])
+                .map(a => {
+                    const st = calendar[d][a.p.platform].status;
+                    return chip(a.p, st === 'hit' ? 'hit' : st === 'near' ? 'near' : '');
+                }).join('');
+            const label = (i === 0 || d.endsWith('-01')) ? md(d) : Number(d.slice(8));
+            const cls = ['day', i === 0 && 'today', d === state.selectedDate && 'selected']
+                .filter(Boolean).join(' ');
+            html += `<button class="${cls}" data-date="${d}" aria-label="${md(d)} 週${WD[wd(d)]}${i === 0 ? '，今天' : ''}">
+                        <span class="num">${label}</span><span class="chips">${chips}</span></button>`;
         });
-        const tail = (7 - (lead + dates.length) % 7) % 7;
-        html += '<div class="cell pad"></div>'.repeat(tail);
-        grid.innerHTML = html;
+        html += '<div class="day pad"></div>'.repeat((7 - (lead + dates.length) % 7) % 7);
+        document.getElementById('calendar').innerHTML = html;
+
+        document.getElementById('horizon').textContent = '計畫已公布至：' +
+            platforms.map(p => `${short(p.platform)} ${md(p.published_until)}`).join('、') +
+            '。超過這個日期的過境還不會出現在日曆上。';
     }
 
     function renderDetail() {
-        const box = document.getElementById('day-detail');
+        const box = document.getElementById('detail'), title = document.getElementById('detail-title');
         const d = state.selectedDate;
-        if (!d) { box.innerHTML = '<p class="empty">點選日期，查看當天每顆衛星的狀態。</p>'; return; }
-
-        const [, m, day] = d.split('-').map(Number);
-        let html = `<h2>${m} 月 ${day} 日（週${WEEKDAY[weekdayOf(d)]}）</h2>`;
-
-        const rec = state.recByDate[d];
-        if (rec) {
-            html += `<div class="advice"><strong>${rec.advice}</strong>
-                     <span class="reason">${rec.reason}（預報信心：${rec.confidence}）</span></div>`;
+        if (!d) {
+            title.textContent = '當天過境';
+            box.innerHTML = '<p class="empty">點選日期，地圖會畫出當天所有過境條帶。</p>';
+            return;
         }
+        title.innerHTML = `${md(d)} 週${WD[wd(d)]}的過境`;
+        let html = '';
+        const rec = state.recByDate[d];
+        if (rec) html += `<p class="advice"><strong>${rec.advice}</strong><span>${rec.reason}，預報信心${rec.confidence}</span></p>`;
 
-        html += '<ul class="sat-list">';
-        state.cal.platforms.forEach(p => {
-            const entry = state.cal.calendar[d][p.platform];
-            html += `<li class="sat-row"><div class="head">
-                        <span class="mk ${sensorClass(p.sensor)} ${entry.status}"></span>
-                        <strong>${p.platform}</strong><span>${SENSOR_TEXT[p.sensor]}</span>
-                        <span class="state">${STATUS_TEXT[entry.status]}</span></div>`;
-            (entry.acquisitions || []).forEach(a => {
+        const passes = passesOf(d);
+        if (passes.length) {
+            html += '<ul class="passes">' + passes.map(a => {
+                const st = state.cal.calendar[d][a.p.platform].status;
                 const cloud = state.cloudById[a.id];
-                const where = a.coverage > 0 ? counties(a.counties, 6) : '未涵蓋查詢範圍，點選查看條帶位置';
-                html += `<button class="acq${a.id === state.selectedAcq ? ' active' : ''}"
-                                 data-id="${a.id}" data-status="${entry.status}">
-                            <span class="meta">
-                                <span>${hhmm(a.start_time)} ${DIRECTION_TEXT[a.pass_direction] || ''}</span>
-                                ${a.coverage > 0 ? `<span>覆蓋 ${pct(a.coverage)}</span>` : ''}
-                                ${cloud != null ? `<span>預報雲量 ${cloud}%</span>` : ''}
-                            </span>
-                            <span class="where">${where}</span></button>`;
-            });
-            html += '</li>';
+                const sub = a.coverage > 0
+                    ? `覆蓋 ${pct(a.coverage)}${cloud != null ? `，雲量 ${cloud}%` : ''}　${listCounties(a.counties, 5)}`
+                    : '沒有涵蓋查詢範圍';
+                return `<li><button class="pass" data-id="${a.id}">
+                    ${chip(a.p, st === 'hit' ? 'hit' : st === 'near' ? 'near' : '')}
+                    <span class="t">${hhmm(a.start_time)}</span>
+                    <span class="d"><span>${a.p.platform} ${SENSOR[a.p.sensor]}・${DIR[a.pass_direction] || ''}，${STATUS_TEXT[st]}</span>
+                    <span class="sub">${sub}</span></span></button></li>`;
+            }).join('') + '</ul>';
+        } else {
+            html += '<p class="empty">這天沒有衛星經過查詢範圍附近。</p>';
+        }
+        const quiet = state.cal.platforms.filter(p => !(state.cal.calendar[d][p.platform].acquisitions));
+        const none = quiet.filter(p => state.cal.calendar[d][p.platform].status === 'none').map(p => p.platform);
+        const unpub = quiet.filter(p => state.cal.calendar[d][p.platform].status === 'unpublished').map(p => p.platform);
+        if (none.length || unpub.length) {
+            html += `<p class="quiet">${none.length ? `無過境：${none.join('、')}。` : ''}${unpub.length ? `計畫未公布：${unpub.join('、')}。` : ''}</p>`;
+        }
+        box.innerHTML = html;
+    }
+
+    // ---------- 繪製：地圖 ----------
+    function clearStrips() { stripLayer.clearLayers(); stripById.clear(); state.highlight = null; }
+
+    async function fetchFootprint(id) {
+        if (!footprintCache.has(id)) footprintCache.set(id, api(`/api/acquisitions/${id}`));
+        return footprintCache.get(id);
+    }
+
+    async function drawDay(d) {
+        clearStrips();
+        const passes = passesOf(d);
+        let acqs;
+        try {
+            acqs = await Promise.all(passes.map(a => fetchFootprint(a.id)));
+        } catch (err) { warn([`無法載入條帶範圍：${err.message}`]); return; }
+        if (state.selectedDate !== d) return;              // 載入期間又換了日期
+
+        passes.forEach((a, i) => {
+            const acq = acqs[i], near = a.coverage <= 0;
+            const color = acq.sensor === 'SAR' ? '#5b4b8a' : '#0f7b6c';
+            const layer = L.geoJSON(acq.footprint, {
+                style: {
+                    color, weight: near ? 1.2 : 1.8, dashArray: near ? '5 4' : null,
+                    fillColor: color, fillOpacity: acq.sensor === 'SAR' ? 1 : (near ? .05 : .16),
+                    className: acq.sensor === 'SAR' && !near ? 'fp-sar' : '',
+                }
+            }).bindTooltip(
+                `<b>${acq.platform} ${SENSOR[acq.sensor]}</b>　${hhmm(acq.start_time)}–${hhmm(acq.end_time)}<br>` +
+                `${DIR[acq.pass_direction] || ''}，${near ? '未涵蓋查詢範圍' : `覆蓋 ${pct(a.coverage)}`}`,
+                { sticky: true, className: 'strip-tip' }
+            ).on('mouseover', () => setHighlight(a.id)).on('mouseout', () => setHighlight(null))
+             .on('click', () => focusStrip(a.id));
+            if (acq.sensor === 'SAR' && near) layer.setStyle({ fillOpacity: .03 });
+            layer.addTo(stripLayer);
+            stripById.set(a.id, layer);
         });
-        box.innerHTML = html + '</ul>';
+        fitToStrips([...stripById.values()]);
+    }
+
+    // 條帶常延伸到很遠，只縮放到「支援範圍內那一段」加上查詢範圍
+    function fitToStrips(layers) {
+        let b = state.aoi ? drawnItems.getBounds() : presetLayer.getBounds();
+        for (const l of layers) {
+            const f = l.getBounds();
+            const clip = L.latLngBounds([Math.max(f.getSouth(), 21), Math.max(f.getWest(), 118)],
+                                        [Math.min(f.getNorth(), 27), Math.min(f.getEast(), 123)]);
+            b = b.isValid() ? b.extend(clip) : clip;
+        }
+        if (b.isValid()) map.fitBounds(b, { padding: [24, 24], maxZoom: 10 });
+    }
+
+    function setHighlight(id) {
+        state.highlight = id;
+        stripById.forEach((layer, key) => layer.eachLayer(p => {
+            const el = p.getElement?.();
+            if (el) el.classList.toggle('fp-dim', id != null && key !== id);
+        }));
+        document.querySelectorAll('.pass').forEach(b => b.classList.toggle('hl', Number(b.dataset.id) === id));
+    }
+
+    function focusStrip(id) {
+        const layer = stripById.get(id);
+        if (layer) { fitToStrips([layer]); setHighlight(id); }
     }
 
     // ---------- 互動 ----------
-    function selectDate(d) {
+    function selectDate(d, { scroll = true } = {}) {
         state.selectedDate = d;
-        document.querySelectorAll('.cell.selected').forEach(c => c.classList.remove('selected'));
-        document.querySelector(`.cell[data-date="${d}"]`)?.classList.add('selected');
+        document.querySelectorAll('.day.selected').forEach(c => c.classList.remove('selected'));
+        document.querySelector(`.day[data-date="${d}"]`)?.classList.add('selected');
         renderDetail();
-    }
-
-    async function showFootprint(id, status) {
-        state.selectedAcq = id;
-        document.querySelectorAll('.acq').forEach(b => b.classList.toggle('active', Number(b.dataset.id) === id));
-        footprintLayer.clearLayers();
-
-        let acq = footprintCache.get(id);
-        if (!acq) {
-            try {
-                acq = await api(`/api/acquisitions/${id}`);
-                footprintCache.set(id, acq);
-            } catch (err) {
-                showWarnings([`無法載入取像範圍：${err.message}`]);
-                return;
-            }
-        }
-        if (state.selectedAcq !== id) return;                       // 等待期間又點了別的
-
-        const color = acq.sensor === 'SAR' ? '#e8590c' : '#1971c2';
-        const layer = L.geoJSON(acq.footprint, {
-            style: { color, weight: 2, fillOpacity: status === 'near' ? 0.04 : 0.12,
-                     dashArray: status === 'near' ? '6 4' : null }
-        }).bindTooltip(
-            `<b>${acq.platform}（${SENSOR_TEXT[acq.sensor]}）</b><br>` +
-            `${hhmm(acq.start_time)}–${hhmm(acq.end_time)} 台灣時間<br>${DIRECTION_TEXT[acq.pass_direction] || ''}`,
-            { sticky: true, className: 'sat-tooltip' }
-        ).addTo(footprintLayer);
-
-        // S2 條帶很長，只縮放到「支援區域內的那一段」加上查詢範圍
-        const fb = layer.getBounds();
-        const target = L.latLngBounds(
-            [Math.max(fb.getSouth(), 21), Math.max(fb.getWest(), 118)],
-            [Math.min(fb.getNorth(), 27), Math.min(fb.getEast(), 123)]
-        );
-        const scope = state.aoi ? drawnItems.getBounds() : presetLayer.getBounds();
-        if (scope.isValid()) target.extend(scope);
-        map.fitBounds(target, { padding: [20, 20] });
+        if (scroll) document.getElementById('detail-section').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        return drawDay(d);
     }
 
     document.getElementById('calendar').addEventListener('click', e => {
-        const cell = e.target.closest('.cell:not(.pad)');
-        if (!cell) return;
-        selectDate(cell.dataset.date);
-        // 直接點到某顆衛星的標記：同時在地圖上顯示它當天的第一趟取像
-        const mk = e.target.closest('.mk');
-        const entry = mk && state.cal.calendar[cell.dataset.date][mk.dataset.platform];
-        if (entry?.acquisitions) showFootprint(entry.acquisitions[0].id, entry.status);
+        const day = e.target.closest('.day:not(.pad)');
+        if (day) selectDate(day.dataset.date);
     });
-    document.getElementById('calendar').addEventListener('keydown', e => {
-        const cell = e.target.closest('.cell:not(.pad)');
-        if (cell && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); selectDate(cell.dataset.date); }
+    document.getElementById('next').addEventListener('click', async e => {
+        const btn = e.target.closest('button[data-id]');
+        if (!btn) return;
+        await selectDate(btn.dataset.date);
+        focusStrip(Number(btn.dataset.id));
     });
-    document.getElementById('day-detail').addEventListener('click', e => {
-        const btn = e.target.closest('.acq');
-        if (btn) showFootprint(Number(btn.dataset.id), btn.dataset.status);
-    });
+    const detail = document.getElementById('detail');
+    detail.addEventListener('click', e => { const b = e.target.closest('.pass'); if (b) focusStrip(Number(b.dataset.id)); });
+    detail.addEventListener('mouseover', e => { const b = e.target.closest('.pass'); if (b) setHighlight(Number(b.dataset.id)); });
+    detail.addEventListener('mouseleave', () => setHighlight(null));
 
     function setAoi(layer) {
         drawnItems.clearLayers();
@@ -454,16 +547,15 @@
         presetLayer.setStyle({ opacity: layer ? 0 : 1 });
         load();
     }
-    function resetAoi() { setAoi(null); }
-
+    document.getElementById('draw-rect').addEventListener('click', () =>
+        new L.Draw.Rectangle(map, drawControl.options.draw.rectangle).enable());
+    document.getElementById('reset-aoi').addEventListener('click', () => setAoi(null));
     map.on(L.Draw.Event.CREATED, e => setAoi(e.layer));
     map.on(L.Draw.Event.EDITED, () => setAoi(drawnItems.getLayers()[0] || null));
-    map.on(L.Draw.Event.DELETED, () => { if (!drawnItems.getLayers().length) resetAoi(); });
+    map.on(L.Draw.Event.DELETED, () => { if (!drawnItems.getLayers().length) setAoi(null); });
 
     // ---------- 啟動 ----------
-    api('/api/presets/taiwan')
-        .then(p => presetLayer.addData(p.geometry))
-        .catch(() => {});                                            // 外框只是輔助，失敗不影響日曆
+    api('/api/presets/taiwan').then(p => presetLayer.addData(p.geometry)).catch(() => {});
     load();
     </script>
 </body>
