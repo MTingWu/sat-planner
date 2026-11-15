@@ -16,6 +16,9 @@ from app.services.weather import get_cloud, cloud_at
 from app.services.recommend import recommend, MIN_COVERAGE
 from app.services.calendar import build_calendar
 
+import logging
+log = logging.getLogger("uvicorn.error")
+
 TPE = ZoneInfo("Asia/Taipei")
 MAX_AREA_KM2 = 20000
 
@@ -209,7 +212,11 @@ def opportunities(req: AOIRequest):
             center = aoi.centroid
             try:
                 hourly = get_cloud(conn, center.y, center.x)
-            except httpx.HTTPError:
+            except httpx.HTTPError as e:
+                detail = ""
+                if isinstance(e, httpx.HTTPStatusError):
+                    detail = f" status={e.response.status_code} body={e.response.text[:300]}"
+                log.warning("雲量預報取得失敗：%r%s", e, detail)
                 hourly = None
                 warnings.append("雲量預報暫時無法取得，建議僅依取像時間判斷")
     except psycopg.Error:
