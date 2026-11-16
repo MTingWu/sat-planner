@@ -18,7 +18,10 @@ def fetch_cloud_batch(points):
         "forecast_days": 14,   # 剛好兩週，不會被加權計次，不要再調高
         "timezone": "UTC",
     }
-    r = httpx.get(URL, params=params, timeout=60)
+    # 連線層失敗（逾時、TLS 握手失敗）由 transport 立刻重試；其餘交給呼叫端隔一段時間再試
+    transport = httpx.HTTPTransport(retries=2)
+    with httpx.Client(transport=transport, timeout=httpx.Timeout(60, connect=15)) as client:
+        r = client.get(URL, params=params)
     r.raise_for_status()
     data = r.json()
     data = data if isinstance(data, list) else [data]   # 只有一個點時回傳的是物件
