@@ -1,8 +1,12 @@
 import json
+import logging
+import os
+from contextlib import asynccontextmanager
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import psycopg
@@ -15,11 +19,31 @@ from app.services.weather import get_cloud, cloud_at
 from app.services.recommend import recommend, MIN_COVERAGE
 from app.services.calendar import build_calendar
 
+log = logging.getLogger("uvicorn.error")
 TPE = ZoneInfo("Asia/Taipei")
 MAX_AREA_KM2 = 20000
 STALE_HOURS = 12        # 雲量預報超過這個時間就提醒使用者
 
-app = FastAPI(title="Satellite Acquisition Planner")
+@asynccontextmanager
+async def lifespan(app):
+    if not os.environ.get("DATABASE_URL"):
+        raise RuntimeError("未設定 DATABASE_URL，API 無法連線資料庫")
+    pool.open()
+    yield
+    pool.close()
+
+app = FastAPI(title="Satellite Acquisition Planner", lifespan=lifespan)
+
+# 資料庫連不上、連線池借不到連線（PoolTimeout 是 OperationalError 的子類別）
+# → 503，不能誤報成使用者輸入錯誤
+@app.exception_handler(psycopg.OperationalError)
+async def db_unavailable(request: Request, exc: psycopg.OperationalError):
+    log.error("資料庫暫時無法使用：%r", exc)
+    return JSONResponse(status_code=503, content={"detail": "資料庫暫時無法使用，請稍後再試"})
+
+# PostGIS 解析 GeoJSON 失敗時拋出 SQLSTATE XX000（psycopg 的 InternalError_），已實測確認
+GEOJSON_REJECTED = psycopg.errors.InternalError_
+GEOJSON_MSG = "資料庫無法解析此 GeoJSON，請確認多邊形座標是否合法（例如起迄點須閉合）"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5500", "https://mtingwu.github.io"],
@@ -171,8 +195,8 @@ def calendar(req: CalendarRequest):
             km2 = check_area(cur, geom) if geom else None
             rows = cur.execute(CALENDAR_QUERY, {"geom": geom, "start": now, "end": end}).fetchall()
             horizon = plan_horizon(cur)
-    except psycopg.Error:
-        raise HTTPException(422, "資料庫無法解析此 GeoJSON，請確認多邊形座標是否合法（例如起迄點須閉合）")
+    except GEOJSON_REJECTED:
+        raise HTTPException(422, GEOJSON_MSG)
 
     # 自訂 AOI 要覆蓋一半才算拍到；整個台灣不可能被單一條帶蓋一半，
     # 改用 10%（約 3,700 km²），只掃到邊角的取像會顯示為 partial
@@ -214,9 +238,8 @@ def opportunities(req: AOIRequest):
                 age_h = (datetime.now(timezone.utc) - fetched_at).total_seconds() / 3600
                 if age_h > STALE_HOURS:
                     warnings.append(f"雲量預報是 {age_h:.0f} 小時前更新的，僅供參考")
-    except psycopg.Error:
-        # 當 PostGIS 拒絕不合法的空間資料時，統一回傳 422
-        raise HTTPException(422, "資料庫無法解析此 GeoJSON，請確認多邊形座標是否合法（例如起迄點須閉合）")
+    except GEOJSON_REJECTED:
+        raise HTTPException(422, GEOJSON_MSG)
 
     for r in rows:
         r["cloud"] = (cloud_at(hourly, r["start_time"])

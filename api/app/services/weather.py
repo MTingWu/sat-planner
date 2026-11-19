@@ -43,11 +43,9 @@ def get_cloud(conn, lat, lon):
     row = conn.execute(NEAREST_SQL, {"lat": lat, "lon": lon, "max_age": MAX_AGE_HOURS}).fetchone()
     if row is None:
         return None, None
-    hourly, fetched_at, dist = (row["hourly"], row["fetched_at"], row["dist"]) \
-        if isinstance(row, dict) else row
-    if dist > MAX_DISTANCE_DEG:
+    if row["dist"] > MAX_DISTANCE_DEG:
         return None, None
-    return hourly, fetched_at
+    return row["hourly"], row["fetched_at"]
 
 
 def cloud_at(hourly, t):
