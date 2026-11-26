@@ -1,7 +1,7 @@
 import json
 import logging
 import os
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
@@ -22,6 +22,8 @@ from app.services.calendar import build_calendar
 log = logging.getLogger("uvicorn.error")
 TPE = ZoneInfo("Asia/Taipei")
 MAX_AREA_KM2 = 20000
+MAX_VERTICES = 500          # 面積再小，頂點太多也會拖慢 shapely 與 PostGIS
+STATEMENT_TIMEOUT = "8s"    # 單一查詢超過就中止，避免一個請求卡住整個連線池
 STALE_HOURS = 12        # 雲量預報超過這個時間就提醒使用者
 
 @asynccontextmanager
@@ -40,6 +42,23 @@ app = FastAPI(title="Satellite Acquisition Planner", lifespan=lifespan)
 async def db_unavailable(request: Request, exc: psycopg.OperationalError):
     log.error("資料庫暫時無法使用：%r", exc)
     return JSONResponse(status_code=503, content={"detail": "資料庫暫時無法使用，請稍後再試"})
+
+# 查詢超過 statement_timeout 被中止（QueryCanceled 也是 OperationalError，
+# 所以要另外處理，否則會被上面的處理器說成「資料庫無法使用」）
+@app.exception_handler(psycopg.errors.QueryCanceled)
+async def query_timeout(request: Request, exc: psycopg.errors.QueryCanceled):
+    log.warning("查詢逾時被中止：%s %s", request.method, request.url.path)
+    return JSONResponse(status_code=503,
+                        content={"detail": "查詢時間過長已中止，請縮小或簡化範圍後再試"})
+
+@contextmanager
+def db():
+    """借一條連線並設定這次交易的查詢逾時。
+    用 SET LOCAL 而不是連線參數：Neon 的 pooled 連線（PgBouncer）不支援 options，
+    SET LOCAL 只作用在目前交易，兩種連線字串都適用。"""
+    with pool.connection() as conn:
+        conn.execute(f"SET LOCAL statement_timeout = '{STATEMENT_TIMEOUT}'")
+        yield conn
 
 # PostGIS 解析 GeoJSON 失敗時拋出 SQLSTATE XX000（psycopg 的 InternalError_），已實測確認
 GEOJSON_REJECTED = psycopg.errors.InternalError_
@@ -143,7 +162,12 @@ def parse_aoi(geometry):
         aoi = shape(geometry)
     except Exception:
         raise HTTPException(422, "geometry 不是合法的 GeoJSON")
-    if aoi.geom_type != "Polygon" or not aoi.is_valid:
+    if aoi.geom_type != "Polygon":
+        raise HTTPException(422, "只接受合法的單一多邊形")
+    vertices = len(aoi.exterior.coords) + sum(len(r.coords) for r in aoi.interiors)
+    if vertices > MAX_VERTICES:
+        raise HTTPException(422, f"多邊形有 {vertices} 個頂點，上限是 {MAX_VERTICES} 個，請簡化後再試")
+    if not aoi.is_valid:
         raise HTTPException(422, "只接受合法的單一多邊形")
     if not SUPPORTED_AREA.contains(aoi):
         minx, miny, maxx, maxy = INGEST_BOUNDS
@@ -195,7 +219,7 @@ def livez():
 def healthz():
     """查資料庫，並回報資料新鮮度，用來判斷排程是否正常。資料庫連不上時由全域處理器回 503。"""
     now = datetime.now(timezone.utc)
-    with pool.connection() as conn:
+    with db() as conn:
         r = conn.execute(FRESHNESS_SQL).fetchone()
         latest = conn.execute(LATEST_PLANS_SQL).fetchall()
 
@@ -234,14 +258,14 @@ def healthz():
 
 @app.get("/api/status")
 def status():
-    with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+    with db() as conn, conn.cursor(row_factory=dict_row) as cur:
         plans = cur.execute(STATUS_SQL).fetchall()
     return {"plans": plans}
 
 @app.get("/api/presets/{key}")
 def preset(key: str):
     """預設查詢範圍的幾何，前端用來畫出「台灣」指的是哪裡。"""
-    with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+    with db() as conn, conn.cursor(row_factory=dict_row) as cur:
         row = cur.execute(PRESET_SQL, (key,)).fetchone()
     if row is None:
         raise HTTPException(404, "找不到這個預設範圍")
@@ -257,7 +281,7 @@ def calendar(req: CalendarRequest):
     end = datetime.combine(today + timedelta(days=req.days), time.min, tzinfo=TPE)
 
     try:
-        with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        with db() as conn, conn.cursor(row_factory=dict_row) as cur:
             km2 = check_area(cur, geom) if geom else None
             rows = cur.execute(CALENDAR_QUERY, {"geom": geom, "start": now, "end": end}).fetchall()
             horizon = plan_horizon(cur)
@@ -276,7 +300,7 @@ def calendar(req: CalendarRequest):
 @app.get("/api/acquisitions/{acq_id}")
 def acquisition(acq_id: int):
     """單一取像的詳細資料與 footprint，前端點選時才載入。"""
-    with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+    with db() as conn, conn.cursor(row_factory=dict_row) as cur:
         row = cur.execute(ACQUISITION_SQL, (acq_id,)).fetchone()
     if row is None:
         raise HTTPException(404, "找不到這筆取像")
@@ -290,7 +314,7 @@ def opportunities(req: AOIRequest):
     warnings = []
 
     try:
-        with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+        with db() as conn, conn.cursor(row_factory=dict_row) as cur:
             km2 = check_area(cur, geom)
             rows = cur.execute(QUERY, {"geom": geom, "days": req.days}).fetchall()
             horizon = plan_horizon(cur)

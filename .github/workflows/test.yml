@@ -7,11 +7,15 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read            # 測試只需要讀程式碼
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
-    # 設定 CI 環境的服務：我們需要一個帶有 PostGIS 的資料庫讓 API 匯入時不報錯
+    # CI 用的臨時 PostGIS；建表後整合測試會真的打到資料庫
     services:
       db:
         image: postgis/postgis:15-3.3
@@ -26,6 +30,9 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://postgres:password@localhost:5432/sat_planner
 
     steps:
     - name: 取得程式碼
@@ -42,10 +49,14 @@ jobs:
         pip install -r api/requirements.txt
         pip install pytest httpx
 
-    - name: 執行單元測試
-      env:
-        # 讓 API 連線到 CI 環境裡的臨時資料庫
-        DATABASE_URL: postgresql://postgres:password@localhost:5432/sat_planner
+    - name: 建立資料表（依序執行 db/init/*.sql）
+      run: |
+        for f in db/init/*.sql; do
+          echo "== $f"
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -q -f "$f"
+        done
+
+    - name: 執行測試（含 PostGIS 整合測試）
       run: |
         cd api
-        pytest
+        pytest -rs           # -rs：列出被略過的測試與原因，整合測試若被略過一眼就看得到
