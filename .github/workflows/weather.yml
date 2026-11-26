@@ -2,7 +2,7 @@ name: Prefetch weather
 
 on:
   schedule:
-    - cron: "0 */6 * * *" #每6小時一次
+    - cron: "23 */3 * * *"   # 每 3 小時，避開整點；GitHub 排程常延遲或跳過，多排幾次比較保險
   workflow_dispatch:
 
 jobs:

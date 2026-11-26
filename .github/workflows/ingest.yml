@@ -2,7 +2,7 @@ name: ingest-plans
 
 on:
   schedule:
-    - cron: "0 18 * * *"   # 每天 UTC 18:00，即台灣時間 02:00
+    - cron: "23 18 * * *"   # 每天 UTC 18:23，即台灣時間 02:23；避開整點，GitHub 整點排程常延遲或被跳過
   workflow_dispatch:
 
 jobs:
