@@ -67,6 +67,11 @@
         .btn.ghost { background: transparent; color: var(--ink); }
         .btn:hover { background: #2c3d4b; color: #fff; }
         .actions .note { font-size: 12px; color: var(--ink-soft); }
+        .notice {
+            margin-top: 12px; padding: 8px 10px; border-left: 3px solid var(--mark);
+            background: #fff; font-size: 13px;
+        }
+        .notice .btn { margin-top: 6px; padding: 3px 10px; font-size: 13px; }
         .warning { margin-top: 12px; padding: 6px 10px; border-left: 3px solid var(--alert); color: var(--alert); font-size: 13px; background: #fff; }
 
         section { border-top: 1px solid var(--ink); margin-top: 20px; padding-top: 12px; }
@@ -178,6 +183,7 @@
                 <button class="btn ghost" id="reset-aoi" hidden>改回台灣</button>
                 <span class="note">也可用地圖左側工具畫多邊形</span>
             </div>
+            <div id="wake" class="notice" hidden role="status"></div>
             <div id="warnings"></div>
         </header>
 
@@ -282,10 +288,18 @@
 
     // ---------- 工具 ----------
     async function api(path, body) {
-        const res = await fetch(`${API_BASE}${path}`, body === undefined ? {} :
-            { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        let res;
+        try {
+            res = await fetch(`${API_BASE}${path}`, body === undefined ? {} :
+                { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        } catch {
+            throw Object.assign(new Error('無法連線到伺服器'), { status: 0 });
+        }
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `伺服器回應 ${res.status}`);
+        if (!res.ok) {
+            const msg = typeof data.detail === 'string' ? data.detail : `伺服器回應 ${res.status}`;
+            throw Object.assign(new Error(msg), { status: res.status });
+        }
         return data;
     }
     const short = p => p.replace(/^S/, '');
@@ -312,12 +326,32 @@
         return out.sort((x, y) => x.start_time.localeCompare(y.start_time));
     }
 
+    // ---------- 冷啟動提示 ----------
+    // Render 免費方案閒置後會休眠，第一次請求要等幾十秒；超過 3 秒還沒回應就說明原因
+    const wake = document.getElementById('wake');
+    let wakeTimer = null;
+    function startWaitNotice() {
+        clearTimeout(wakeTimer);
+        wakeTimer = setTimeout(() => {
+            wake.innerHTML = '伺服器正在喚醒中。這個作品部署在免費方案，閒置一段時間後會休眠，第一次載入約需 30–60 秒，請稍候。';
+            wake.hidden = false;
+        }, 3000);
+    }
+    function stopWaitNotice() { clearTimeout(wakeTimer); wake.hidden = true; }
+    function showRetry(message) {
+        clearTimeout(wakeTimer);
+        wake.innerHTML = `${message}。伺服器可能還在啟動，可以稍等一下再試。<br><button class="btn" id="retry">重新載入</button>`;
+        wake.hidden = false;
+        document.getElementById('retry').addEventListener('click', load);
+    }
+
     // ---------- 載入 ----------
     async function load() {
         const grid = document.getElementById('calendar');
         grid.classList.add('loading');
         warn([]);
         clearStrips();
+        startWaitNotice();
 
         const calReq = api('/api/calendar', state.aoi ? { geometry: state.aoi, days: DAYS } : { days: DAYS });
         const oppReq = state.aoi ? api('/api/opportunities', { geometry: state.aoi, days: DAYS }) : null;
@@ -329,7 +363,12 @@
             grid.classList.remove('loading');
             ['calendar', 'next', 'detail', 'horizon', 'next-note'].forEach(id => document.getElementById(id).innerHTML = '');
             renderScope();
-            warn([`無法載入：${err.message}`]);
+            if (err.status === 0 || err.status >= 500) {
+                showRetry(err.message);       // 連線或伺服器問題：給重試按鈕
+            } else {
+                stopWaitNotice();
+                warn([`無法載入：${err.message}`]);   // 輸入問題（例如範圍超出）：照實顯示
+            }
             return;
         }
 
@@ -343,6 +382,7 @@
                 warnings.push(...opp.warnings);
             } catch (err) { warnings.push(`無法取得觀測建議：${err.message}`); }
         }
+        stopWaitNotice();
         warn(warnings);
         grid.classList.remove('loading');
         if (!state.cal.dates.includes(state.selectedDate)) state.selectedDate = null;
@@ -555,6 +595,7 @@
     map.on(L.Draw.Event.DELETED, () => { if (!drawnItems.getLayers().length) setAoi(null); });
 
     // ---------- 啟動 ----------
+    renderScope();
     api('/api/presets/taiwan').then(p => presetLayer.addData(p.geometry)).catch(() => {});
     load();
     </script>

@@ -166,6 +166,53 @@ def plan_horizon(cur):
             horizon[r["sensor"]][r["platform"]] = r["horizon"].astimezone(TPE).date()
     return horizon
 
+FRESHNESS_SQL = """
+SELECT
+  (SELECT max(fetched_at) FROM plan_files)                AS plans_fetched_at,
+  (SELECT min(valid_to) FROM (
+      SELECT DISTINCT ON (platform) valid_to FROM plan_files
+      ORDER BY platform, valid_from DESC) latest)          AS earliest_plan_end,
+  (SELECT max(fetched_at) FROM weather_grid)              AS weather_fetched_at,
+  (SELECT count(*) FROM weather_grid
+    WHERE fetched_at > now() - interval '12 hours')       AS weather_fresh_points,
+  (SELECT count(*) FROM weather_grid)                     AS weather_points
+"""
+
+def hours_since(t, now):
+    return None if t is None else round((now - t).total_seconds() / 3600, 1)
+
+@app.get("/livez")
+def livez():
+    """不碰資料庫，只表示 API 程序活著。給外部監控定時呼叫（避免連帶喚醒資料庫）。"""
+    return {"status": "ok"}
+
+@app.get("/healthz")
+def healthz():
+    """查資料庫，並回報資料新鮮度，用來判斷排程是否正常。資料庫連不上時由全域處理器回 503。"""
+    now = datetime.now(timezone.utc)
+    with pool.connection() as conn:
+        r = conn.execute(FRESHNESS_SQL).fetchone()
+    weather_age = hours_since(r["weather_fetched_at"], now)
+    plan_days_left = (None if r["earliest_plan_end"] is None
+                      else round((r["earliest_plan_end"] - now).total_seconds() / 86400, 1))
+    warnings = []
+    if weather_age is None or weather_age > STALE_HOURS:
+        warnings.append("雲量預報超過 12 小時沒有更新，檢查 Prefetch weather 排程")
+    if plan_days_left is None or plan_days_left < 0:
+        warnings.append("有衛星的最新計畫已經過期，檢查 ingest-plans 排程")
+    return {
+        "status": "degraded" if warnings else "ok",
+        "database": "ok",
+        "plans": {"latest_fetched_at": r["plans_fetched_at"],
+                  "earliest_plan_end": r["earliest_plan_end"],
+                  "days_until_earliest_plan_end": plan_days_left},
+        "weather": {"latest_fetched_at": r["weather_fetched_at"],
+                    "age_hours": weather_age,
+                    "fresh_points": r["weather_fresh_points"],
+                    "total_points": r["weather_points"]},
+        "warnings": warnings,
+    }
+
 @app.get("/api/status")
 def status():
     with pool.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
