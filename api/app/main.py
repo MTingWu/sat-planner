@@ -166,12 +166,17 @@ def plan_horizon(cur):
             horizon[r["sensor"]][r["platform"]] = r["horizon"].astimezone(TPE).date()
     return horizon
 
+# 計畫結束後這麼多天內仍沒有新計畫 → 警告；超過就視為 ESA 已停止發布，只列出不警告
+PLAN_LAPSE_WARN_DAYS = 14
+
+LATEST_PLANS_SQL = """
+SELECT DISTINCT ON (platform) platform, valid_to
+FROM plan_files ORDER BY platform, valid_from DESC
+"""
+
 FRESHNESS_SQL = """
 SELECT
   (SELECT max(fetched_at) FROM plan_files)                AS plans_fetched_at,
-  (SELECT min(valid_to) FROM (
-      SELECT DISTINCT ON (platform) valid_to FROM plan_files
-      ORDER BY platform, valid_from DESC) latest)          AS earliest_plan_end,
   (SELECT max(fetched_at) FROM weather_grid)              AS weather_fetched_at,
   (SELECT count(*) FROM weather_grid
     WHERE fetched_at > now() - interval '12 hours')       AS weather_fresh_points,
@@ -192,20 +197,34 @@ def healthz():
     now = datetime.now(timezone.utc)
     with pool.connection() as conn:
         r = conn.execute(FRESHNESS_SQL).fetchone()
+        latest = conn.execute(LATEST_PLANS_SQL).fetchall()
+
+    active, lapsed, stopped = {}, {}, {}
+    for p in latest:
+        days_left = round((p["valid_to"] - now).total_seconds() / 86400, 1)
+        if days_left > 0:
+            active[p["platform"]] = days_left                     # 還剩幾天
+        elif -days_left <= PLAN_LAPSE_WARN_DAYS:
+            lapsed[p["platform"]] = p["valid_to"]                 # 剛結束，值得注意
+        else:
+            stopped[p["platform"]] = p["valid_to"]                # 很久沒新計畫，視為停止發布
+
     weather_age = hours_since(r["weather_fetched_at"], now)
-    plan_days_left = (None if r["earliest_plan_end"] is None
-                      else round((r["earliest_plan_end"] - now).total_seconds() / 86400, 1))
     warnings = []
     if weather_age is None or weather_age > STALE_HOURS:
         warnings.append("雲量預報超過 12 小時沒有更新，檢查 Prefetch weather 排程")
-    if plan_days_left is None or plan_days_left < 0:
-        warnings.append("有衛星的最新計畫已經過期，檢查 ingest-plans 排程")
+    if not active:
+        warnings.append("沒有任何衛星有進行中的計畫，檢查 ingest-plans 排程")
+    for platform, end in sorted(lapsed.items()):
+        warnings.append(f"{platform} 的最新計畫已於 {end.astimezone(TPE):%m/%d} 結束，"
+                        "ESA 可能尚未發布或已停止發布，請到 ESA 網頁確認")
     return {
         "status": "degraded" if warnings else "ok",
         "database": "ok",
         "plans": {"latest_fetched_at": r["plans_fetched_at"],
-                  "earliest_plan_end": r["earliest_plan_end"],
-                  "days_until_earliest_plan_end": plan_days_left},
+                  "active_days_left": active,
+                  "recently_ended": lapsed,
+                  "stopped_publishing": stopped},
         "weather": {"latest_fetched_at": r["weather_fetched_at"],
                     "age_hours": weather_age,
                     "fresh_points": r["weather_fresh_points"],

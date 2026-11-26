@@ -17,7 +17,7 @@ import psycopg
 
 from app.services.kml_parser import parse_kml
 from app.services.normalize import normalize
-from app.services.plans import latest_plans, ts
+from app.services.plans import scan_plans, ts
 from app.services.store import save
 
 
@@ -75,11 +75,20 @@ def ingest_one(conn, plan, fetch=download):
     return len(records)
 
 
-def run(get_plans=latest_plans, ingest=ingest_one):
-    plans = get_plans()
+def run(get_plans=scan_plans, ingest=ingest_one):
+    try:
+        plans, ended = get_plans()
+    except Exception:
+        # ESA 網頁打不開或改版：不能當成「沒有更新」
+        print("讀取 ESA 計畫清單失敗", file=sys.stderr)
+        traceback.print_exc()
+        sys.exit(1)
+
+    for platform, plan in sorted(ended.items()):
+        # 不入庫，但要留下紀錄，否則這顆衛星會無聲無息地從日曆上消失
+        print(f"{platform}: ESA 最新計畫已於 {ts(plan['end']):%Y-%m-%d} 結束，尚未發布新計畫")
     if not plans:
-        # latest_plans() 是讀 ESA 網頁，網頁改版時會回傳空的，不能當成「沒有更新」
-        print("找不到任何計畫，ESA 網頁可能改版了", file=sys.stderr)
+        print("沒有任何進行中的計畫", file=sys.stderr)
         sys.exit(1)
 
     failed = []

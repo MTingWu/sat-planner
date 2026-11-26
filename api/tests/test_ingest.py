@@ -8,7 +8,7 @@ import pytest
 import app.jobs.ingest_plans as job
 
 PLAN = {"platform": "S1C", "url": "https://example.com/S1C.kml", "filename": "S1C_TEST.kml",
-        "start": "20261111T172028", "end": "20261203T193600"}
+        "start": "20261111t172028", "end": "20261203t193600"}
 
 
 @contextmanager
@@ -26,7 +26,7 @@ def test_download_raises_on_http_error(monkeypatch):
 def test_no_plans_found_exits_with_error(monkeypatch):
     monkeypatch.setattr(job.psycopg, "connect", fake_connect)
     with pytest.raises(SystemExit) as e:
-        job.run(get_plans=lambda: {})
+        job.run(get_plans=lambda: ({}, {}))
     assert e.value.code == 1
 
 
@@ -43,7 +43,7 @@ def test_one_failure_does_not_stop_others(monkeypatch):
         return 3
 
     with pytest.raises(SystemExit) as e:
-        job.run(get_plans=lambda: plans, ingest=ingest)
+        job.run(get_plans=lambda: (plans, {}), ingest=ingest)
     assert e.value.code == 1
     assert done == ["S1C", "S2B"]
 
@@ -69,3 +69,18 @@ def test_empty_plan_leaves_database_untouched(db, monkeypatch):
         job.ingest_one(db, PLAN, fetch=lambda url: b"<kml>changed format</kml>")
     after = db.execute("SELECT (SELECT count(*) FROM plan_files), (SELECT count(*) FROM acquisitions)").fetchone()
     assert after == before
+
+
+def test_ended_platform_is_reported(monkeypatch, capsys):
+    monkeypatch.setattr(job.psycopg, "connect", fake_connect)
+    ended = {"S2B": {**PLAN, "platform": "S2B", "end": "20261123t150000"}}
+    job.run(get_plans=lambda: ({"S1C": PLAN}, ended), ingest=lambda conn, plan: None)
+    assert "S2B: ESA 最新計畫已於 2026-11-23 結束" in capsys.readouterr().out
+
+
+def test_esa_page_failure_exits_with_error(monkeypatch):
+    def boom():
+        raise RuntimeError("page changed")
+    with pytest.raises(SystemExit) as e:
+        job.run(get_plans=boom)
+    assert e.value.code == 1
