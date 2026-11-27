@@ -153,6 +153,28 @@
         .pass .d .sub { color: var(--ink-soft); font-size: 12px; }
         .quiet { margin-top: 10px; font-size: 12px; color: var(--ink-soft); }
 
+        /* ---------- 說明視窗 ---------- */
+        .title-row { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+        .about-btn {
+            background: none; border: 0; padding: 0; cursor: pointer; font-size: 13px;
+            color: var(--ink-soft); text-decoration: underline; text-underline-offset: 3px;
+        }
+        .about-btn:hover { color: var(--ink); }
+        dialog#intro {
+            width: min(540px, calc(100% - 32px)); max-height: calc(100% - 48px); overflow-y: auto;
+            padding: 26px 28px 22px; border: 1px solid var(--ink); border-top: 4px solid var(--mark);
+            border-radius: 0; background: var(--paper); color: var(--ink);
+        }
+        dialog#intro::backdrop { background: rgba(29, 42, 53, .45); }
+        #intro h2 { font-size: 19px; margin: 0 0 14px; }
+        #intro p { margin: 0 0 12px; }
+        #intro h3 { font-size: 13px; margin: 18px 0 8px; padding-top: 12px; border-top: 1px solid var(--rule); }
+        #intro ol { margin: 0; padding-left: 1.3em; }
+        #intro li { margin-bottom: 6px; }
+        #intro .fine { font-size: 12px; color: var(--ink-soft); margin: 16px 0 0; }
+        #intro .fine a { color: inherit; }
+        #intro .actions { margin-top: 18px; justify-content: flex-end; }
+
         @media (max-width: 768px) {
             #map { height: 45%; flex-basis: 100%; }
             #resizer { display: none; }
@@ -172,11 +194,30 @@
         </defs>
     </svg>
 
+    <dialog id="intro" aria-labelledby="intro-title">
+        <h2 id="intro-title">為什麼做這個網頁</h2>
+        <p>颱風或豪雨過後，判釋災情需要衛星影像，但這時候天空常被厚雲覆蓋，光學衛星拍不到地面。雷達衛星（SAR）不受雲影響，卻不是每天都會經過同一個地方。</p>
+        <p>想知道「下一次哪顆衛星、什麼時候會拍到這裡」，原本得自己下載歐洲太空總署（ESA）的取像計畫檔，一份一份打開比對。這個網頁把這件事自動化：每天整理 Sentinel-1（雷達）與 Sentinel-2（光學）的取像計畫，加上雲量預報，告訴你未來 14 天哪幾天拍得到，以及該優先用雷達還是光學。</p>
+        <h3>怎麼使用</h3>
+        <ol>
+            <li>「接下來的觀測機會」列出最近幾次會拍到台灣的時間。</li>
+            <li>點日曆上的日期，地圖會畫出當天所有衛星的取像範圍。</li>
+            <li>按「框選範圍」圈出你關心的地方，日曆與建議會改以該範圍重新計算。</li>
+        </ol>
+        <p class="fine">取像計畫可能被 ESA 臨時調整，雲量為預報值，本網頁僅供規劃參考。設計說明與原始碼請見 <a href="https://github.com/MTingWu/sat-planner" target="_blank" rel="noopener">GitHub</a>。</p>
+        <div class="actions">
+            <button class="btn" id="close-intro" autofocus>開始使用</button>
+        </div>
+    </dialog>
+
     <div id="map"></div>
     <div id="resizer" title="拖曳調整面板寬度"></div>
     <div id="panel">
         <header>
-            <h1>衛星觀測日曆</h1>
+            <div class="title-row">
+                <h1>衛星觀測日曆</h1>
+                <button class="about-btn" id="open-intro">關於這個網頁</button>
+            </div>
             <div class="scope" id="scope"></div>
             <div class="actions">
                 <button class="btn" id="draw-rect">框選範圍</button>
@@ -593,6 +634,18 @@
     map.on(L.Draw.Event.CREATED, e => setAoi(e.layer));
     map.on(L.Draw.Event.EDITED, () => setAoi(drawnItems.getLayers()[0] || null));
     map.on(L.Draw.Event.DELETED, () => { if (!drawnItems.getLayers().length) setAoi(null); });
+
+    // ---------- 說明視窗 ----------
+    // 第一次造訪自動顯示；關閉後記在瀏覽器裡，回訪不再打擾，需要時可從「關於這個網頁」打開
+    const intro = document.getElementById('intro');
+    const INTRO_KEY = 'sat-planner:intro-seen:v1';
+    function introSeen() { try { return localStorage.getItem(INTRO_KEY) === '1'; } catch { return false; } }
+    function markIntroSeen() { try { localStorage.setItem(INTRO_KEY, '1'); } catch {} }
+    document.getElementById('open-intro').addEventListener('click', () => intro.showModal());
+    document.getElementById('close-intro').addEventListener('click', () => intro.close());
+    intro.addEventListener('close', markIntroSeen);               // 按鈕、Esc 都會觸發
+    intro.addEventListener('click', e => { if (e.target === intro) intro.close(); });   // 點背景關閉
+    if (!introSeen()) intro.showModal();
 
     // ---------- 啟動 ----------
     renderScope();
